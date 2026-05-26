@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+    <meta name="theme-color" content="#09090b"/>
+    <meta name="apple-mobile-web-app-capable" content="yes"/>
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+    <meta name="apple-mobile-web-app-title" content="BTC Journal"/>
+    <meta name="mobile-web-app-capable" content="yes"/>
+    <meta name="application-name" content="BTC Journal Pro"/>
+    <meta name="description" content="Real-Time Bitcoin Futures Trading Journal dan PnL Monitor"/>
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json"/>
+    <link rel="apple-touch-icon" href="icon.png"/>
+    <title>BTC Trading Journal Pro - PWA</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { background-color: #09090b; color: #f4f4f5; font-family: ui-sans-serif, system-ui, sans-serif; }
+        .collapsible-content { max-height: 0; overflow: hidden; transition: max-height 0.35s ease-out; }
+        .collapsible-content.expanded { max-height: 3000px; transition: max-height 0.5s ease-in-out; }
+        .rotate-transition { transition: transform 0.2s ease; }
+        .confidence-bar { transition: width 0.5s ease; }
+        .price-update-btn:active { transform: scale(0.98); }
+        /* Safe area for notch/home bar */
+        header { padding-top: calc(1.5rem + env(safe-area-inset-top)) !important; }
+        body { padding-bottom: env(safe-area-inset-bottom); }
+        /* Offline bar */
+        #offline-bar { display:none; background:#7f1d1d; color:#fca5a5; text-align:center; font-size:10px; padding:4px; position:sticky; top:0; z-index:200; }
+        #offline-bar.show { display:block; }
+        /* PWA Install Banner */
+        #pwa-banner { display:none; position:fixed; bottom:0; left:0; right:0; background:linear-gradient(135deg,#0f172a,#1e293b); border-top:1px solid #0ea5e9; padding:12px 16px; z-index:9999; align-items:center; justify-content:space-between; gap:12px; animation: slideUp 0.3s ease; }
+        #pwa-banner.show { display:flex; }
+        @keyframes slideUp { from{transform:translateY(100%);opacity:0} to{transform:translateY(0);opacity:1} }
+        .pwa-pill { display:inline-flex; align-items:center; gap:3px; font-size:9px; background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3); border-radius:4px; padding:1px 6px; }
+        /* Trade Journal */
+        .trade-win  { border-left: 3px solid #10b981; }
+        .trade-loss { border-left: 3px solid #ef4444; }
+        .trade-be   { border-left: 3px solid #f59e0b; }
+        .journal-card { background: #18181b; border: 1px solid #27272a; border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
+        .stat-box { background: rgba(255,255,255,0.03); border:1px solid #27272a; border-radius:10px; padding:10px 12px; }
+        /* Bottom nav */
+        #bottom-nav { position:fixed; bottom:0; left:0; right:0; background:#0a0a0b; border-top:1px solid #27272a; display:flex; z-index:800; padding-bottom: env(safe-area-inset-bottom); }
+        .nav-btn { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:8px 4px 6px; font-size:9px; font-weight:700; color:#71717a; border:none; background:transparent; cursor:pointer; gap:2px; }
+        .nav-btn.active { color:#38bdf8; }
+        .nav-btn svg { width:18px; height:18px; }
+        .page { display:none; }
+        .page.active { display:block; }
+        body { padding-bottom: calc(56px + env(safe-area-inset-bottom)) !important; }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 antialiased">
+
+<!-- Offline Bar -->
+<div id="offline-bar">📵 Mode Offline — Data cache ditampilkan</div>
+
+    <div id="page-home" class="page active">
+<div class="max-w-md mx-auto min-h-screen flex flex-col pb-12">
+        <header class="pt-6 pb-4 border-b border-zinc-900 px-4 flex justify-between items-center bg-zinc-950/90 backdrop-blur sticky top-0 z-50">
+            <div>
+                <h1 class="text-lg font-bold tracking-tight text-sky-400">⚡ BTC Futures Journal Pro</h1>
+                <div class="flex items-center gap-2 mt-0.5">
+                    <p class="text-[10px] text-zinc-500">V7.3 PWA | Real-Time PnL</p>
+                    <span class="pwa-pill" id="pwa-badge">⚡ PWA</span>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="openImportExportModal()" class="text-xs bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-2 py-1.5 rounded-lg">📁 Backup</button>
+                <button onclick="openChannelModal()" class="text-xs bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-3 py-1.5 rounded-lg">+ Tab Baru</button>
+            </div>
+        </header>
+
+        <!-- Statistik Global + Live Price -->
+        <div class="grid grid-cols-2 gap-3 p-4">
+            <div class="bg-zinc-900/40 border border-zinc-800/60 rounded-xl p-3.5 border-l-4 border-l-sky-500">
+                <h3 class="text-[10px] font-bold text-zinc-500 uppercase">Win Rate Global</h3>
+                <p class="text-lg font-extrabold text-emerald-400" id="global-winrate">0%</p>
+            </div>
+            <div class="bg-zinc-900/40 border border-zinc-800/60 rounded-xl p-3.5 border-l-4 border-l-emerald-500">
+                <h3 class="text-[10px] font-bold text-zinc-500 uppercase">Total Log</h3>
+                <p class="text-lg font-extrabold text-zinc-100" id="global-total">0 Logs</p>
+            </div>
+            <div class="col-span-2 bg-gradient-to-r from-amber-950/20 to-emerald-950/20 border border-amber-500/30 rounded-xl p-3">
+                <div class="flex justify-between items-center flex-wrap gap-2">
+                    <div class="flex items-center gap-2">
+                        <span class="text-amber-400 text-xl">₿</span>
+                        <div>
+                            <p class="text-[9px] text-zinc-400">Harga BTC Live</p>
+                            <p id="live-btc-price" class="text-lg font-mono font-bold text-white">$ ---</p>
+                            <p id="price-timestamp" class="text-[8px] text-zinc-500">Belum diperbarui</p>
+                        </div>
+                    </div>
+                    <button id="btc-price-update-btn" onclick="fetchBitcoinPriceWithFallback()" class="bg-sky-600 ...">
+  🔄 Update
+</button>
+                </div>
+                <div class="border-t border-zinc-700/50 mt-2 pt-2 flex gap-2 items-center">
+                    <span class="text-[9px] text-zinc-400">✏️ Manual:</span>
+                    <input type="number" id="manual-price" placeholder="Harga manual" class="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1 text-xs w-28 text-emerald-300">
+                    <button onclick="setManualPrice()" class="bg-amber-600/70 hover:bg-amber-500 text-white text-[10px] font-bold py-1 px-2 rounded">Set Manual</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ACTIVE LEVEL TRADING PANEL -->
+        <div class="mx-4 mb-4 bg-gradient-to-br from-sky-950/30 to-emerald-950/30 border border-sky-500/30 rounded-xl p-4 shadow-lg">
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="text-xs font-bold text-sky-400 uppercase">🎯 ACTIVE LEVEL TRADING</h3>
+                <div class="flex gap-2">
+                    <button onclick="applyConfluenceLevels()" class="text-[9px] bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 px-2 py-1 rounded">🔮 Pakai Konfluensi</button>
+                    <button onclick="resetToManualMode()" class="text-[9px] bg-zinc-700/50 hover:bg-zinc-700 text-zinc-400 px-2 py-1 rounded">✏️ Manual</button>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+                <div><label class="text-[9px] text-zinc-500">💰 ENTRY (USDT)</label><input type="number" id="active-entry" placeholder="76500" class="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-2 text-emerald-400 font-bold text-sm"></div>
+                <div><label class="text-[9px] text-zinc-500">🛑 STOP LOSS (USDT)</label><input type="number" id="active-sl" placeholder="75200" class="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-2 text-red-400 font-bold text-sm"></div>
+                <div><label class="text-[9px] text-zinc-500">🎯 TAKE PROFIT (USDT)</label><input type="number" id="active-tp" placeholder="77800" class="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-2 text-amber-400 font-bold text-sm"></div>
+                <div><label class="text-[9px] text-zinc-500">💰 NILAI TRADING (USDT)</label><input type="number" id="trade-value" placeholder="1000" value="1000" class="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-2 text-sky-400 font-bold text-sm"></div>
+                <div><label class="text-[9px] text-zinc-500">⚡ LEVERAGE (x)</label><input type="number" id="leverage" placeholder="10" value="10" class="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-2 text-purple-400 font-bold text-sm"></div>
+                <div><label class="text-[9px] text-zinc-500">📊 RISK/REWARD</label><input type="text" id="active-rr" readonly class="w-full bg-zinc-800 border border-zinc-700 rounded-lg p-2 text-amber-400 font-bold text-sm"></div>
+            </div>
+            <div class="mt-3 grid grid-cols-2 gap-2 text-[10px] bg-zinc-950/50 rounded-lg p-2">
+                <div><span class="text-zinc-500">💸 Risk per Trade:</span><span id="risk-amount" class="text-red-400 font-bold ml-1">0 USDT</span></div>
+                <div><span class="text-zinc-500">🎯 Reward per Trade:</span><span id="reward-amount" class="text-emerald-400 font-bold ml-1">0 USDT</span></div>
+                <div class="col-span-2"><span class="text-zinc-500">⚠️ Liquidation Price (Isolated):</span><span id="liquidation-price" class="text-yellow-400 font-bold ml-1">0 USDT</span></div>
+                <div class="col-span-2"><span class="text-zinc-500">💰 Position Size:</span><span id="position-size" class="text-sky-400 font-bold ml-1">0 USDT</span></div>
+            </div>
+            <div class="mt-3 pt-3 border-t border-sky-500/20">
+                <div class="flex justify-between items-center mb-1">
+                    <span class="text-[9px] text-zinc-500 uppercase">📊 CONFIDENCE LEVEL</span>
+                    <span id="confidence-percent" class="text-xs font-bold text-amber-400">0%</span>
+                </div>
+                <div class="w-full bg-zinc-800 rounded-full h-2 overflow-hidden"><div id="confidence-bar" class="confidence-bar h-full rounded-full bg-gradient-to-r from-amber-500 to-emerald-500" style="width:0%"></div></div>
+                <div class="flex gap-2 mt-2">
+                    <input type="range" id="confidence-slider" min="0" max="100" value="0" class="flex-1 h-1.5 rounded-lg bg-zinc-700">
+                    <input type="number" id="confidence-input" value="0" class="w-16 bg-zinc-800 border border-zinc-700 rounded-lg p-1 text-center text-xs text-amber-400">
+                    <button onclick="updateManualConfidence()" class="text-[9px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 px-2 py-1 rounded">Set</button>
+                </div>
+                <div id="confidence-note" class="text-[9px] text-zinc-500 mt-1 italic">Atur confidence level secara manual</div>
+            </div>
+            <div class="flex gap-2 mt-3">
+                <button onclick="saveActiveLevels()" class="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black py-2 rounded-lg text-xs uppercase">💾 Simpan</button>
+                <button onclick="openCloseTradeModal()" class="flex-1 bg-gradient-to-r from-rose-600 to-orange-500 hover:from-rose-500 hover:to-orange-400 text-white font-black py-2 rounded-lg text-xs uppercase flex items-center justify-center gap-1">🏁 Tutup Trade</button>
+            </div>
+        </div>
+
+        <!-- NEW: REAL-TIME POSITION MONITORING -->
+        <div class="mx-4 mb-4 bg-gradient-to-r from-indigo-950/30 to-purple-950/30 border border-indigo-500/30 rounded-xl p-4 shadow-lg">
+            <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                    <span class="text-indigo-400 text-sm">📡</span>
+                    <h3 class="text-xs font-bold text-indigo-400 uppercase">REAL-TIME POSITION MONITORING</h3>
+                </div>
+                <button onclick="openCloseTradeModal()" class="text-[9px] bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30 px-2 py-1 rounded-lg font-bold">🏁 Tutup</button>
+            </div>
+            <div id="position-monitoring-content" class="space-y-2 text-xs">
+                <p class="text-zinc-400">Belum ada harga Bitcoin. Klik "Update Harga" atau input manual.</p>
+            </div>
+        </div>
+
+        <!-- Parser AI -->
+        <div class="mx-4 p-4 bg-zinc-900/30 border border-zinc-800/80 rounded-xl mb-4">
+            <label class="block text-[11px] font-extrabold text-sky-400 mb-2">📋 KOTAK INPUT TEXT EXTRACT AI</label>
+            <textarea id="ai-input" placeholder="Tempel analisis bersimbol (➡️, ⏱️, 🟢, 🔴, 🎯, 📈)..." class="w-full h-28 bg-zinc-950 text-xs border border-zinc-800 rounded-lg p-3"></textarea>
+            <button onclick="processAIInput()" class="w-full mt-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black py-3 rounded-xl text-xs uppercase">Proses & Simpan Analisis</button>
+        </div>
+
+        <div class="mx-4 mb-4">
+            <button onclick="analyzeConfluence()" class="w-full bg-gradient-to-r from-purple-600 to-sky-600 hover:from-purple-500 hover:to-sky-500 text-white font-black py-3 rounded-xl text-xs uppercase flex items-center justify-center gap-2">🔍 ANALISIS KONFLUENSI</button>
+        </div>
+
+        <div class="flex gap-2 overflow-x-auto px-4 pb-2 no-scrollbar border-b border-zinc-900/50" id="tab-container"></div>
+        <div class="flex-1 px-4 space-y-3 pb-6" id="log-stream"></div>
+    </div>
+
+</div><!-- end page-home -->
+
+<!-- ═══════════════ PAGE: TRADE JOURNAL ═══════════════ -->
+<div id="page-journal" class="page">
+<div class="max-w-md mx-auto min-h-screen flex flex-col pb-4 px-4 pt-4">
+
+  <!-- Journal Header -->
+  <div class="flex items-center justify-between mb-4">
+    <div>
+      <h2 class="text-base font-black text-emerald-400">📒 Trade Journal</h2>
+      <p class="text-[10px] text-zinc-500">Semua trade tersimpan & PnL Terealisasi</p>
+    </div>
+    <button onclick="openCloseTradeModal()" class="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-black px-3 py-2 rounded-xl">+ Tutup Trade</button>
+  </div>
+
+  <!-- Summary Stats -->
+  <div class="grid grid-cols-2 gap-2 mb-4">
+    <div class="stat-box">
+      <p class="text-[9px] text-zinc-500 uppercase font-bold">Total PnL</p>
+      <p class="text-lg font-extrabold" id="j-total-pnl">$0.00</p>
+    </div>
+    <div class="stat-box">
+      <p class="text-[9px] text-zinc-500 uppercase font-bold">Win Rate</p>
+      <p class="text-lg font-extrabold text-sky-400" id="j-winrate">0%</p>
+    </div>
+    <div class="stat-box">
+      <p class="text-[9px] text-zinc-500 uppercase font-bold">Total Trade</p>
+      <p class="text-base font-extrabold text-zinc-200" id="j-total-trades">0</p>
+    </div>
+    <div class="stat-box">
+      <p class="text-[9px] text-zinc-500 uppercase font-bold">Avg PnL/Trade</p>
+      <p class="text-base font-extrabold" id="j-avg-pnl">$0.00</p>
+    </div>
+  </div>
+
+  <!-- Filter bar -->
+  <div class="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
+    <button onclick="setJournalFilter('all')" id="jf-all" class="jf-btn jf-active whitespace-nowrap text-[10px] font-bold px-3 py-1.5 rounded-lg bg-sky-500/20 text-sky-400 border border-sky-500/30">Semua</button>
+    <button onclick="setJournalFilter('win')" id="jf-win" class="jf-btn whitespace-nowrap text-[10px] font-bold px-3 py-1.5 rounded-lg bg-zinc-800/60 text-zinc-400 border border-zinc-700">✅ Win</button>
+    <button onclick="setJournalFilter('loss')" id="jf-loss" class="jf-btn whitespace-nowrap text-[10px] font-bold px-3 py-1.5 rounded-lg bg-zinc-800/60 text-zinc-400 border border-zinc-700">❌ Loss</button>
+    <button onclick="setJournalFilter('be')" id="jf-be" class="jf-btn whitespace-nowrap text-[10px] font-bold px-3 py-1.5 rounded-lg bg-zinc-800/60 text-zinc-400 border border-zinc-700">⚖️ BE</button>
+  </div>
+
+  <!-- Journal list -->
+  <div id="journal-list"></div>
+
+</div>
+</div><!-- end page-journal -->
+
+    <!-- Modal (ringkas) -->
+    <div id="channel-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50"><div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 w-full max-w-xs"><h3 class="text-xs font-bold text-zinc-400 mb-3">Tambah Tab</h3><input type="text" id="new-channel-name" class="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs"><div class="flex gap-2 mt-4"><button onclick="closeChannelModal()" class="flex-1 bg-zinc-800 text-zinc-400 py-2 rounded-xl">Batal</button><button onclick="submitNewChannel()" class="flex-1 bg-sky-500 text-zinc-950 font-black py-2 rounded-xl">Simpan</button></div></div></div>
+    <div id="edit-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50 overflow-y-auto"><div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 w-full max-w-md max-h-[85vh] overflow-y-auto"><h3 class="text-xs font-bold text-zinc-400 mb-3">Edit Log</h3><input type="hidden" id="edit-log-id"><div class="space-y-2"><input id="edit-date" placeholder="Tanggal" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs"><input id="edit-url" placeholder="URL" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs"><input id="edit-bias" placeholder="Bias" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs"><input id="edit-timeframe" placeholder="Timeframe" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs"><input id="edit-support" placeholder="Support" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs"><input id="edit-resistance" placeholder="Resistance" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs"><input id="edit-liquidity" placeholder="Likuiditas" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs"><textarea id="edit-indicator" rows="2" placeholder="Indikator" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs"></textarea><textarea id="edit-scenario" rows="3" placeholder="Skenario" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs"></textarea><textarea id="edit-catalyst" rows="2" placeholder="Katalis" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs"></textarea></div><div class="flex gap-2 mt-4"><button onclick="closeEditModal()" class="flex-1 bg-zinc-800 text-zinc-400 py-2 rounded-xl">Batal</button><button onclick="saveEditLog()" class="flex-1 bg-emerald-500 text-zinc-950 font-black py-2 rounded-xl">Simpan</button></div></div></div>
+    <div id="import-export-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50"><div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 w-full max-w-sm"><h3 class="text-xs font-bold text-zinc-400 mb-3">Backup & Restore</h3><button onclick="exportAllData()" class="w-full bg-sky-500/20 border border-sky-500/30 text-sky-400 py-2 rounded-xl text-xs mb-2">Export JSON</button><label class="w-full bg-zinc-800 text-zinc-300 py-2 rounded-xl text-xs text-center block cursor-pointer">Import JSON<input type="file" id="import-file" accept=".json" class="hidden" onchange="importDataFromFile(event)"></label><button onclick="resetAllData()" class="w-full mt-2 bg-red-500/20 border border-red-500/30 text-red-400 py-2 rounded-xl text-xs">Reset Data</button><button onclick="closeImportExportModal()" class="w-full mt-2 bg-zinc-800 text-zinc-400 py-2 rounded-xl text-xs">Tutup</button></div></div>
+
+    <script>
+        // Data Store
+        let channels = JSON.parse(localStorage.getItem('btc_channels_v13')) || [{ id: 'crypto-world', name: 'Crypto World' }, { id: 'bitcoin-hyper', name: 'Bitcoin Hyper' }];
+        let activeCh = localStorage.getItem('btc_active_ch_v13') || 'bitcoin-hyper';
+        let logs = JSON.parse(localStorage.getItem('btc_logs_v13')) || [];
+        let activeLevels = JSON.parse(localStorage.getItem('btc_active_levels_v4')) || { entry: '', sl: '', tp: '', rr: '', tradeValue: 1000, leverage: 10, confidence: 0, source: 'manual' };
+        let btcPriceData = JSON.parse(localStorage.getItem('btc_price_data')) || { price: null, timestamp: null, source: 'none' };
+
+        // ========== Helper & Risk Management ==========
+        function calculateRiskReward() {
+            const entry = parseFloat(document.getElementById('active-entry').value);
+            const sl = parseFloat(document.getElementById('active-sl').value);
+            const tp = parseFloat(document.getElementById('active-tp').value);
+            if (!isNaN(entry) && !isNaN(sl) && !isNaN(tp) && entry !== 0) {
+                const risk = Math.abs(entry - sl);
+                const reward = Math.abs(tp - entry);
+                const ratio = (reward / risk).toFixed(2);
+                document.getElementById('active-rr').value = `1 : ${ratio}`;
+                return { risk, reward, ratio };
+            }
+            document.getElementById('active-rr').value = '1 : -';
+            return null;
+        }
+        function calculateRiskManagement() {
+            const entry = parseFloat(document.getElementById('active-entry').value);
+            const sl = parseFloat(document.getElementById('active-sl').value);
+            const tradeValue = parseFloat(document.getElementById('trade-value').value);
+            const leverage = parseFloat(document.getElementById('leverage').value);
+            if (!isNaN(entry) && !isNaN(sl) && !isNaN(tradeValue) && !isNaN(leverage) && entry !== 0) {
+                const positionSize = tradeValue * leverage;
+                document.getElementById('position-size').innerText = `${positionSize.toFixed(2)} USDT`;
+                const priceDiffPercent = Math.abs((entry - sl) / entry);
+                const riskAmount = positionSize * priceDiffPercent;
+                document.getElementById('risk-amount').innerText = `${riskAmount.toFixed(2)} USDT`;
+                const rrMatch = document.getElementById('active-rr').value.match(/1 : ([\d.]+)/);
+                if (rrMatch && rrMatch[1]) {
+                    const rewardAmount = riskAmount * parseFloat(rrMatch[1]);
+                    document.getElementById('reward-amount').innerHTML = `${rewardAmount.toFixed(2)} USDT`;
+                } else { document.getElementById('reward-amount').innerHTML = `0 USDT`; }
+                let liqPrice = entry > sl ? entry - (entry / leverage) : entry + (entry / leverage);
+                document.getElementById('liquidation-price').innerHTML = `${liqPrice.toFixed(2)} USDT`;
+                return { positionSize, riskAmount, liqPrice };
+            }
+            document.getElementById('position-size').innerHTML = `0 USDT`;
+            document.getElementById('risk-amount').innerHTML = `0 USDT`;
+            document.getElementById('reward-amount').innerHTML = `0 USDT`;
+            document.getElementById('liquidation-price').innerHTML = `0 USDT`;
+            return null;
+        }
+
+        // ========== NEW: Update Position Monitoring ==========
+        function updatePositionMonitoring(currentPrice) {
+            const container = document.getElementById('position-monitoring-content');
+            if (!currentPrice || isNaN(currentPrice)) {
+                container.innerHTML = '<p class="text-zinc-400">Harga BTC tidak valid. Perbarui harga terlebih dahulu.</p>';
+                return;
+            }
+            const entry = parseFloat(document.getElementById('active-entry').value);
+            const sl = parseFloat(document.getElementById('active-sl').value);
+            const tp = parseFloat(document.getElementById('active-tp').value);
+            const tradeValue = parseFloat(document.getElementById('trade-value').value);
+            const leverage = parseFloat(document.getElementById('leverage').value);
+            const positionSize = tradeValue * leverage;
+            if (isNaN(entry) || isNaN(sl) || isNaN(tp) || entry === 0) {
+                container.innerHTML = '<p class="text-zinc-400">Entry / SL / TP belum diisi. Isi level trading terlebih dahulu.</p>';
+                return;
+            }
+            const isLong = entry > sl; // jika entry lebih tinggi dari SL -> long
+            let pnlPercent, pnlAmount, distanceToSL, distanceToTP, slPercent, tpPercent;
+            if (isLong) {
+                // Long position
+                pnlPercent = ((currentPrice - entry) / entry) * 100;
+                pnlAmount = positionSize * (pnlPercent / 100);
+                distanceToSL = ((sl - currentPrice) / currentPrice) * 100;
+                distanceToTP = ((tp - currentPrice) / currentPrice) * 100;
+                slPercent = ((sl - entry) / entry) * 100;
+                tpPercent = ((tp - entry) / entry) * 100;
+            } else {
+                // Short position
+                pnlPercent = ((entry - currentPrice) / entry) * 100;
+                pnlAmount = positionSize * (pnlPercent / 100);
+                distanceToSL = ((currentPrice - sl) / currentPrice) * 100;
+                distanceToTP = ((currentPrice - tp) / currentPrice) * 100;
+                slPercent = ((entry - sl) / entry) * 100;
+                tpPercent = ((entry - tp) / entry) * 100;
+            }
+            const pnlColor = pnlAmount >= 0 ? 'text-emerald-400' : 'text-red-400';
+            const direction = isLong ? 'LONG (Buy)' : 'SHORT (Sell)';
+            const riskReward = document.getElementById('active-rr').value;
+            const liquidationPrice = parseFloat(document.getElementById('liquidation-price').innerText);
+            const marginUsed = tradeValue; // isolated margin
+            const roe = (pnlAmount / marginUsed) * 100; // Return on Equity
+
+            container.innerHTML = `
+                <div class="grid grid-cols-2 gap-2 text-[10px]">
+                    <div><span class="text-zinc-500">Arah Posisi:</span> <span class="font-bold text-cyan-400">${direction}</span></div>
+                    <div><span class="text-zinc-500">Harga Saat Ini:</span> <span class="font-mono text-white">$${currentPrice.toLocaleString()}</span></div>
+                    <div><span class="text-zinc-500">Entry Price:</span> <span class="font-mono text-emerald-300">$${entry.toLocaleString()}</span></div>
+                    <div><span class="text-zinc-500">Stop Loss:</span> <span class="font-mono text-red-300">$${sl.toLocaleString()}</span></div>
+                    <div><span class="text-zinc-500">Take Profit:</span> <span class="font-mono text-amber-300">$${tp.toLocaleString()}</span></div>
+                    <div><span class="text-zinc-500">Margin (Isolated):</span> <span class="font-mono text-purple-300">$${marginUsed.toLocaleString()}</span></div>
+                    <div><span class="text-zinc-500">Position Size:</span> <span class="font-mono text-sky-300">$${positionSize.toLocaleString()}</span></div>
+                    <div><span class="text-zinc-500">Leverage:</span> <span class="font-mono text-purple-300">${leverage}x</span></div>
+                    <div class="col-span-2 border-t border-zinc-700/50 my-1"></div>
+                    <div><span class="text-zinc-500">Floating PnL:</span> <span class="${pnlColor} font-bold">${pnlAmount >=0 ? '+' : ''}$${pnlAmount.toFixed(2)}</span></div>
+                    <div><span class="text-zinc-500">Floating PnL%:</span> <span class="${pnlColor} font-bold">${pnlPercent >=0 ? '+' : ''}${pnlPercent.toFixed(2)}%</span></div>
+                    <div><span class="text-zinc-500">ROE (vs Margin):</span> <span class="${pnlColor} font-bold">${roe >=0 ? '+' : ''}${roe.toFixed(2)}%</span></div>
+                    <div><span class="text-zinc-500">Risk/Reward:</span> <span class="text-amber-300">${riskReward}</span></div>
+                    <div class="col-span-2 border-t border-zinc-700/50 my-1"></div>
+                    <div><span class="text-zinc-500">Jarak ke SL:</span> <span class="text-red-300">${distanceToSL.toFixed(2)}% ($${Math.abs(currentPrice - sl).toFixed(2)})</span></div>
+                    <div><span class="text-zinc-500">Jarak ke TP:</span> <span class="text-emerald-300">${distanceToTP.toFixed(2)}% ($${Math.abs(tp - currentPrice).toFixed(2)})</span></div>
+                    <div><span class="text-zinc-500">Likuidasi (Est.):</span> <span class="text-yellow-300">$${liquidationPrice.toLocaleString()}</span></div>
+                    <div><span class="text-zinc-500">SL dalam %:</span> <span class="text-red-300">${Math.abs(slPercent).toFixed(2)}%</span></div>
+                    <div><span class="text-zinc-500">TP dalam %:</span> <span class="text-emerald-300">${Math.abs(tpPercent).toFixed(2)}%</span></div>
+                </div>
+            `;
+        }
+
+        // ========== Harga BTC dengan fallback + update monitoring ==========
+        async function fetchWithTimeout(promise, ms) {
+            const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms));
+            return Promise.race([promise, timeout]);
+        }
+        async function tryBinanceWebSocket() { return new Promise((resolve, reject) => { let resolved=false; const timeout=setTimeout(()=>{if(!resolved) reject(new Error('Binance WS timeout'))},4000); const ws=new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@ticker'); ws.onmessage=(e)=>{if(!resolved){try{const d=JSON.parse(e.data); if(d.c){resolved=true;clearTimeout(timeout);ws.close();resolve(parseFloat(d.c));}}catch(e){}}}; ws.onerror=()=>{if(!resolved) reject(new Error('Binance WS error'))}; setTimeout(()=>{if(!resolved && ws.readyState===WebSocket.OPEN) ws.close()},4500);});}
+        async function tryCoinbaseWebSocket() { return new Promise((resolve, reject) => { let resolved=false; const timeout=setTimeout(()=>{if(!resolved) reject(new Error('Coinbase WS timeout'))},4000); const ws=new WebSocket('wss://ws-feed.exchange.coinbase.com'); ws.onopen=()=>ws.send(JSON.stringify({type:'subscribe',product_ids:['BTC-USD'],channels:['ticker']})); ws.onmessage=(e)=>{if(!resolved){try{const d=JSON.parse(e.data); if(d.type==='ticker' && d.price){resolved=true;clearTimeout(timeout);ws.close();resolve(parseFloat(d.price));}}catch(e){}}}; ws.onerror=()=>{if(!resolved) reject(new Error('Coinbase WS error'))}; setTimeout(()=>{if(!resolved && ws.readyState===WebSocket.OPEN) ws.close()},4500);});}
+        async function tryBinanceREST() { const res=await fetchWithTimeout(fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT'),4000); if(!res.ok) throw new Error(); const data=await res.json(); return parseFloat(data.price); }
+        async function tryCoinGeckoREST() { const res=await fetchWithTimeout(fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd'),4000); if(!res.ok) throw new Error(); const data=await res.json(); return data.bitcoin.usd; }
+        async function tryKrakenREST() { const res=await fetchWithTimeout(fetch('https://api.kraken.com/0/public/Ticker?pair=XBTUSD'),4000); if(!res.ok) throw new Error(); const data=await res.json(); return parseFloat(data.result.XXBTZUSD.c[0]); }
+
+        async function fetchBitcoinPriceWithFallback() {
+            const btn = document.getElementById('btc-price-update-btn');
+            const original = btn.innerHTML;
+            btn.innerHTML = '⏳ Fetch...';
+            btn.disabled = true;
+            const sources = [
+                { name: 'Binance WS', func: tryBinanceWebSocket },
+                { name: 'Coinbase WS', func: tryCoinbaseWebSocket },
+                { name: 'Binance REST', func: tryBinanceREST },
+                { name: 'CoinGecko', func: tryCoinGeckoREST },
+                { name: 'Kraken', func: tryKrakenREST }
+            ];
+            let success = false;
+            for (const src of sources) {
+                try {
+                    const price = await src.func();
+                    if (price && !isNaN(price)) {
+                        const now = Date.now();
+                        btcPriceData = { price, timestamp: now, source: src.name };
+                        localStorage.setItem('btc_price_data', JSON.stringify(btcPriceData));
+                        updatePriceDisplayOnUI(price, src.name, now);
+                        updatePositionMonitoring(price);
+                        success = true;
+                        break;
+                    }
+                } catch(e) { console.warn(src.name, e); }
+            }
+            if (!success) {
+                if (btcPriceData.price && btcPriceData.timestamp && (Date.now() - btcPriceData.timestamp < 3600000)) {
+                    updatePriceDisplayOnUI(btcPriceData.price, btcPriceData.source, btcPriceData.timestamp);
+                    updatePositionMonitoring(btcPriceData.price);
+                    alert(`Gagal real-time. Tampilkan harga terakhir dari ${btcPriceData.source}`);
+                } else {
+                    document.getElementById('live-btc-price').innerHTML = '$ ---';
+                    document.getElementById('price-timestamp').innerHTML = 'Gagal ambil harga';
+                    updatePositionMonitoring(null);
+                    alert('Semua sumber gagal. Gunakan input manual.');
+                }
+            }
+            btn.innerHTML = original;
+            btn.disabled = false;
+        }
+
+        function setManualPrice() {
+            const manualVal = parseFloat(document.getElementById('manual-price').value);
+            if (isNaN(manualVal)) { alert("Masukkan harga valid"); return; }
+            const now = Date.now();
+            btcPriceData = { price: manualVal, timestamp: now, source: 'manual' };
+            localStorage.setItem('btc_price_data', JSON.stringify(btcPriceData));
+            updatePriceDisplayOnUI(manualVal, 'manual', now);
+            updatePositionMonitoring(manualVal);
+            alert(`Harga manual disimpan: $${manualVal.toLocaleString()}`);
+        }
+
+        function updatePriceDisplayOnUI(price, source, timestamp) {
+            const priceElem = document.getElementById('live-btc-price');
+            const timeElem = document.getElementById('price-timestamp');
+            if (price && !isNaN(price)) {
+                priceElem.innerHTML = `$${price.toLocaleString(undefined, {minimumFractionDigits:2})}`;
+                const d = new Date(timestamp);
+                const formatted = `${d.toLocaleDateString('id-ID')} ${d.toLocaleTimeString('id-ID', {hour12: true})}`;
+                timeElem.innerHTML = `Update: ${formatted} via ${source}`;
+            } else {
+                priceElem.innerHTML = '$ ---';
+                timeElem.innerHTML = 'Harga tidak valid';
+            }
+        }
+
+        // ========== Sisa fungsi dashboard (konfluensi, confidence, edit, dll) ==========
+        function updateManualConfidence() { let v=parseInt(document.getElementById('confidence-input').value); if(!isNaN(v) && v>=0 && v<=100){ document.getElementById('confidence-slider').value=v; activeLevels.confidence=v/100; activeLevels.source='manual'; updateConfidenceDisplay(v/100,'manual'); saveActiveLevels(); } }
+        function setupConfidenceSync() { const slider=document.getElementById('confidence-slider'), input=document.getElementById('confidence-input'); slider.oninput=()=>{ input.value=slider.value; activeLevels.confidence=slider.value/100; activeLevels.source='manual'; updateConfidenceDisplay(activeLevels.confidence,'manual'); saveActiveLevels(); }; input.oninput=()=>{ let v=parseInt(input.value); if(isNaN(v)) v=0; if(v>100) v=100; slider.value=v; activeLevels.confidence=v/100; activeLevels.source='manual'; updateConfidenceDisplay(activeLevels.confidence,'manual'); saveActiveLevels(); }; }
+        function updateConfidenceDisplay(conf, src) { let p=Math.round(conf*100); document.getElementById('confidence-percent').innerText=p+'%'; document.getElementById('confidence-bar').style.width=p+'%'; document.getElementById('confidence-slider').value=p; document.getElementById('confidence-input').value=p; document.getElementById('confidence-note').innerHTML=src==='confluence'?`🔮 Konfluensi ${p}% dari ${activeLevels.confluenceCount||0} log`:'✏️ Mode manual - atur confidence'; }
+        function loadActiveLevelsToForm() { document.getElementById('active-entry').value=activeLevels.entry||''; document.getElementById('active-sl').value=activeLevels.sl||''; document.getElementById('active-tp').value=activeLevels.tp||''; document.getElementById('trade-value').value=activeLevels.tradeValue||1000; document.getElementById('leverage').value=activeLevels.leverage||10; document.getElementById('active-rr').value=activeLevels.rr||'1 : -'; calculateRiskReward(); calculateRiskManagement(); updateConfidenceDisplay(activeLevels.confidence||0, activeLevels.source||'manual'); if(btcPriceData.price) updatePositionMonitoring(btcPriceData.price); }
+        function saveActiveLevels() { activeLevels={entry:document.getElementById('active-entry').value, sl:document.getElementById('active-sl').value, tp:document.getElementById('active-tp').value, rr:document.getElementById('active-rr').value, tradeValue:parseFloat(document.getElementById('trade-value').value)||1000, leverage:parseFloat(document.getElementById('leverage').value)||10, confidence:activeLevels.confidence||0, source:activeLevels.source||'manual'}; localStorage.setItem('btc_active_levels_v4',JSON.stringify(activeLevels)); calculateRiskReward(); calculateRiskManagement(); if(btcPriceData.price) updatePositionMonitoring(btcPriceData.price); alert("Level trading disimpan"); }
+        function resetToManualMode() { activeLevels.source='manual'; activeLevels.confluenceCount=0; saveActiveLevels(); updateConfidenceDisplay(activeLevels.confidence,'manual'); alert("Mode manual aktif"); }
+        function applyConfluenceLevels() { const today=new Date().toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'}); const todayLogs=logs.filter(l=>l.date===today); if(todayLogs.length<2){ alert(`Hanya ${todayLogs.length} log hari ini`); return; } let entries=[], stops=[], tps=[], hasSup=false, hasRes=false; todayLogs.forEach(l=>{ if(l.entry && l.entry!=='-') entries.push(parseFloat(l.entry.replace(/[^0-9.-]/g,''))); if(l.stoploss && l.stoploss!=='-') stops.push(parseFloat(l.stoploss.replace(/[^0-9.-]/g,''))); if(l.tp1 && l.tp1!=='-') tps.push(parseFloat(l.tp1.replace(/[^0-9.-]/g,''))); if(l.support && l.support!=='-') hasSup=true; if(l.resistance && l.resistance!=='-') hasRes=true; }); let aggEntry=entries.length?entries.sort((a,b)=>a-b)[Math.floor(entries.length/2)]:null; let aggSL=stops.length?stops.sort((a,b)=>a-b)[Math.floor(stops.length/2)]:null; let aggTP=tps.length?tps.sort((a,b)=>a-b)[Math.floor(tps.length/2)]:null; let rrText=''; if(aggEntry && aggSL && aggTP){ let risk=Math.abs(aggEntry-aggSL), reward=Math.abs(aggTP-aggEntry); if(risk>0) rrText=`1 : ${(reward/risk).toFixed(2)}`; } let conf=0.3+(todayLogs.length>=3?0.2:0)+(entries.length>=2?0.2:0)+(stops.length>=2?0.15:0)+((hasSup||hasRes)?0.15:0); conf=Math.min(1,conf); activeLevels={entry:aggEntry?aggEntry.toString():'', sl:aggSL?aggSL.toString():'', tp:aggTP?aggTP.toString():'', rr:rrText, tradeValue:activeLevels.tradeValue||1000, leverage:activeLevels.leverage||10, confidence:conf, source:'confluence', confluenceCount:todayLogs.length}; localStorage.setItem('btc_active_levels_v4',JSON.stringify(activeLevels)); loadActiveLevelsToForm(); updateConfidenceDisplay(conf,'confluence'); alert(`Konfluensi ${todayLogs.length} log, confidence ${Math.round(conf*100)}%`); }
+        function saveData() { localStorage.setItem('btc_channels_v13',JSON.stringify(channels)); localStorage.setItem('btc_active_ch_v13',activeCh); localStorage.setItem('btc_logs_v13',JSON.stringify(logs)); updateWinRate(); }
+        function updateWinRate() { let total=logs.length; if(total===0){ document.getElementById('global-winrate').innerText='0%'; document.getElementById('global-total').innerHTML='0 Logs'; return; } let bullish=logs.filter(l=>{let b=l.bias.toLowerCase(); return !(b.includes('bear')||b.includes('trap')||b.includes('reject')||b.includes('short'));}).length; let wr=(bullish/total)*100; document.getElementById('global-winrate').innerText=`${wr.toFixed(1)}%`; document.getElementById('global-total').innerHTML=`${total} Log${total!==1?'s':''}`; }
+        function renderApp() { const tabContainer=document.getElementById('tab-container'); tabContainer.innerHTML=''; channels.forEach(ch=>{ let btn=document.createElement('button'); btn.className=`whitespace-nowrap px-4 py-2 text-xs font-bold rounded-lg border ${activeCh===ch.id?'bg-sky-500/10 text-sky-400 border-sky-500/30':'bg-zinc-900/20 text-zinc-500 border-zinc-800/40'}`; btn.innerText=ch.name; btn.onclick=()=>{ activeCh=ch.id; saveData(); renderApp(); }; tabContainer.appendChild(btn); }); updateWinRate(); const stream=document.getElementById('log-stream'); stream.innerHTML=''; const currentLogs=logs.filter(l=>l.channel===activeCh).sort((a,b)=>b.id-a.id); if(currentLogs.length===0){ stream.innerHTML='<div class="text-center py-16 text-zinc-600 border border-dashed border-zinc-800 rounded-2xl"><p class="text-xs">Kosong</p></div>'; return; } currentLogs.forEach(log=>{ const isBear=log.bias.toLowerCase().includes('bear')||log.bias.toLowerCase().includes('trap')||log.bias.toLowerCase().includes('reject'); const logId=`log-${log.id}`; const card=document.createElement('div'); card.className='bg-zinc-900/40 border border-zinc-800/50 rounded-2xl overflow-hidden'; card.innerHTML=`<div class="p-4 cursor-pointer flex justify-between items-center border-b border-zinc-800/30 hover:bg-zinc-800/30" onclick="toggleCollapse('${logId}')"><div class="flex gap-2"><span class="text-[11px] uppercase font-black px-2 py-0.5 rounded-md ${isBear?'bg-red-500/10 text-red-400':'bg-emerald-500/10 text-emerald-400'}">${escapeHtml(log.bias.substring(0,30))}</span><span class="text-[10px] text-zinc-400">📅 ${escapeHtml(log.date)}</span></div><div><button onclick="event.stopPropagation();editLog(${log.id})" class="text-amber-400 text-xs px-1">✏️</button><button onclick="event.stopPropagation();deleteLog(${log.id})" class="text-red-400 text-xs px-1">🗑️</button><svg class="w-4 h-4 inline rotate-transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg></div></div><div id="${logId}" class="collapsible-content"><div class="p-4 space-y-2 text-xs"><div><span class="text-zinc-500">⏱️ Timeframe:</span> ${escapeHtml(log.timeframe)}</div><div><span class="text-zinc-500">🎯 Likuiditas:</span> ${escapeHtml(log.liquidity)}</div><div><span class="text-zinc-500">🟢 Support:</span> ${escapeHtml(log.support)}</div><div><span class="text-zinc-500">🔴 Resistance:</span> ${escapeHtml(log.resistance)}</div><div><span class="text-zinc-500">📊 Indikator:</span> ${escapeHtml(log.indicator)}</div><div><span class="text-zinc-500">🗺️ Skenario:</span> ${escapeHtml(log.scenario)}</div><div><span class="text-zinc-500">🔥 Katalis:</span> ${escapeHtml(log.catalyst)}</div><div><a href="${escapeHtml(log.url)}" target="_blank" class="text-sky-400">🔗 YouTube</a></div></div></div>`; stream.appendChild(card); }); }
+        window.toggleCollapse=(id)=>{ let el=document.getElementById(id); let chev=document.querySelector(`#${id} ~ .rotate-transition`); if(el){ el.classList.toggle('expanded'); if(chev) chev.style.transform=el.classList.contains('expanded')?'rotate(180deg)':'rotate(0deg)'; } };
+        function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>]/g, function(m){ if(m==='&') return '&amp;'; if(m==='<') return '&lt;'; if(m==='>') return '&gt;'; return m;}); }
+        function extractYouTubeUrl(t){ let m=t.match(/https?:\/\/[^\s<>"'\]]+/g); if(m) for(let u of m){ if(u.includes('youtube.com')||u.includes('youtu.be')) return u; } return ''; }
+        function processAIInput(){ const txt=document.getElementById('ai-input').value; if(!txt.trim()){ alert("Kosong"); return; } let bias='-',timeframe='-',support='-',resistance='-',liquidity='-',indicator='-',catalyst='-',entry='-',stoploss='-',tp1='-',tp2='-',tp3='-',rr='-'; let date=new Date().toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'}); let targetCh=activeCh; const lower=txt.toLowerCase(); for(let ch of channels){ if(lower.includes(ch.name.toLowerCase())){ targetCh=ch.id; break; } } let url=extractYouTubeUrl(txt); const dateMatch=txt.match(/Tanggal:\s*([^\n\r]+)/i)||txt.match(/(\d{1,2}\s+[A-Za-z]+\s+\d{4})/); if(dateMatch) date=dateMatch[1].replace(/[*_]/g,"").trim(); const lines=txt.split('\n'); let scenarioParts=[]; lines.forEach(line=>{ const clean=line.trim(); if(!clean) return; const cut=(str,marker)=>{ let idx=str.indexOf(marker); if(idx!==-1) return str.substring(idx+marker.length).replace(/[*_]/g,"").trim()||"-"; return "-"; }; if(clean.includes("➡️")) bias=cut(clean,"➡️"); else if(clean.includes("⏱️")) timeframe=cut(clean,"⏱️"); else if(clean.includes("🟢")) support=cut(clean,"🟢"); else if(clean.includes("🔴")) resistance=cut(clean,"🔴"); else if(clean.includes("🎯")) liquidity=cut(clean,"🎯"); else if(clean.includes("📊")) indicator=cut(clean,"📊"); else if(clean.includes("🔥")) catalyst=cut(clean,"🔥"); else if(clean.includes("💰")) entry=cut(clean,"💰"); else if(clean.includes("🛑")) stoploss=cut(clean,"🛑"); else if(clean.includes("🎯1")||clean.includes("🎯 TP1")){ let v=cut(clean,clean.includes("🎯1")?"🎯1":"🎯 TP1"); if(v!=="-") tp1=v; } else if(clean.includes("🎯2")||clean.includes("🎯 TP2")){ let v=cut(clean,clean.includes("🎯2")?"🎯2":"🎯 TP2"); if(v!=="-") tp2=v; } else if(clean.includes("🎯3")||clean.includes("🎯 TP3")){ let v=cut(clean,clean.includes("🎯3")?"🎯3":"🎯 TP3"); if(v!=="-") tp3=v; } else if(clean.includes("📈")||clean.includes("RR")){ let marker=clean.includes("RR")?"RR":"📈"; let v=cut(clean,marker); if(v!=="-") rr=v; } else if(clean.includes("🗺️")){ let init=cut(clean,"🗺️"); if(init!=="-") scenarioParts.push(init); } else if(scenarioParts.length>0 && !/^[➡️⏱️🟢🔴🎯📊🔥🗺️💰🛑📈]/.test(clean) && !clean.toLowerCase().includes("link video") && !clean.toLowerCase().includes("tanggal:")){ scenarioParts.push(clean.replace(/[*_]/g,"").trim()); } }); let scenario=scenarioParts.length>0?scenarioParts.join(" "):"Skenario otomatis."; const newLog={ id:Date.now(), channel:targetCh, date, url, bias:bias==="-"? "Neutral":bias, timeframe, entry:entry==="-"? "":entry, stoploss:stoploss==="-"? "":stoploss, tp1:tp1==="-"? "":tp1, tp2:tp2==="-"? "":tp2, tp3:tp3==="-"? "":tp3, rr:rr==="-"? "":rr, support, resistance, liquidity, indicator, scenario, catalyst }; logs.unshift(newLog); activeCh=targetCh; saveData(); renderApp(); document.getElementById('ai-input').value=''; alert("Log ditambahkan"); }
+        function deleteLog(id){ if(confirm("Hapus?")){ logs=logs.filter(l=>l.id!==id); saveData(); renderApp(); } }
+        function editLog(id){ const log=logs.find(l=>l.id===id); if(!log) return; document.getElementById('edit-log-id').value=log.id; document.getElementById('edit-date').value=log.date||''; document.getElementById('edit-url').value=log.url||''; document.getElementById('edit-bias').value=log.bias||''; document.getElementById('edit-timeframe').value=log.timeframe||''; document.getElementById('edit-support').value=log.support||''; document.getElementById('edit-resistance').value=log.resistance||''; document.getElementById('edit-liquidity').value=log.liquidity||''; document.getElementById('edit-indicator').value=log.indicator||''; document.getElementById('edit-scenario').value=log.scenario||''; document.getElementById('edit-catalyst').value=log.catalyst||''; document.getElementById('edit-modal').style.display='flex'; }
+        function saveEditLog(){ const id=parseInt(document.getElementById('edit-log-id').value); const idx=logs.findIndex(l=>l.id===id); if(idx!==-1){ logs[idx]={...logs[idx], date:document.getElementById('edit-date').value, url:document.getElementById('edit-url').value, bias:document.getElementById('edit-bias').value, timeframe:document.getElementById('edit-timeframe').value, support:document.getElementById('edit-support').value, resistance:document.getElementById('edit-resistance').value, liquidity:document.getElementById('edit-liquidity').value, indicator:document.getElementById('edit-indicator').value, scenario:document.getElementById('edit-scenario').value, catalyst:document.getElementById('edit-catalyst').value }; saveData(); renderApp(); closeEditModal(); alert("Update"); } }
+        function closeEditModal(){ document.getElementById('edit-modal').style.display='none'; }
+        function openChannelModal(){ document.getElementById('channel-modal').style.display='flex'; }
+        function closeChannelModal(){ document.getElementById('channel-modal').style.display='none'; document.getElementById('new-channel-name').value=''; }
+        function submitNewChannel(){ let name=document.getElementById('new-channel-name').value.trim(); if(!name) return; let id=name.toLowerCase().replace(/\s+/g,'-'); if(channels.some(c=>c.id===id)){ alert("Sudah ada"); return; } channels.push({id,name}); activeCh=id; saveData(); renderApp(); closeChannelModal(); }
+        function openImportExportModal(){ document.getElementById('import-export-modal').style.display='flex'; }
+        function closeImportExportModal(){ document.getElementById('import-export-modal').style.display='none'; }
+        function exportAllData(){ const full={channels, logs, activeLevels, btcPriceData, tradeJournal, version:'v7.4-pwa'}; const blob=new Blob([JSON.stringify(full,null,2)],{type:'application/json'}); const link=document.createElement('a'); link.href=URL.createObjectURL(blob); link.download=`btc_backup_${new Date().toISOString().slice(0,19)}.json`; link.click(); URL.revokeObjectURL(link.href); alert(`Export sukses! ${logs.length} analisis + ${tradeJournal.length} trade journal`); }
+        function importDataFromFile(event){ const file=event.target.files[0]; if(!file) return; const reader=new FileReader(); reader.onload=e=>{ try{ const imp=JSON.parse(e.target.result); if(imp.channels) channels=imp.channels; if(imp.logs) logs=imp.logs; if(imp.activeLevels) activeLevels=imp.activeLevels; if(imp.tradeJournal){ tradeJournal=imp.tradeJournal; localStorage.setItem('btc_trade_journal_v1',JSON.stringify(tradeJournal)); } if(imp.btcPriceData){ btcPriceData=imp.btcPriceData; localStorage.setItem('btc_price_data',JSON.stringify(btcPriceData)); updatePriceDisplayOnUI(btcPriceData.price, btcPriceData.source, btcPriceData.timestamp); if(btcPriceData.price) updatePositionMonitoring(btcPriceData.price); } saveData(); renderApp(); loadActiveLevelsToForm(); renderJournal(); updateJournalStats(); alert("Import sukses! " + logs.length + " analisis + " + tradeJournal.length + " trade journal"); }catch(err){ alert("File invalid"); } }; reader.readAsText(file); event.target.value=''; }
+        function resetAllData(){ if(confirm("Reset semua data?")){ localStorage.clear(); channels=[{id:'crypto-world',name:'Crypto World'},{id:'bitcoin-hyper',name:'Bitcoin Hyper'}]; logs=[]; tradeJournal=[]; localStorage.removeItem('btc_trade_journal_v1'); activeLevels={entry:'',sl:'',tp:'',rr:'',tradeValue:1000,leverage:10,confidence:0,source:'manual'}; btcPriceData={price:null,timestamp:null,source:'none'}; activeCh='bitcoin-hyper'; saveData(); renderApp(); loadActiveLevelsToForm(); localStorage.setItem('btc_price_data',JSON.stringify(btcPriceData)); updatePriceDisplayOnUI(null,'none'); updatePositionMonitoring(null); alert("Reset selesai"); closeImportExportModal(); } }
+        function analyzeConfluence(){ applyConfluenceLevels(); }
+
+        window.onload = () => {
+            renderApp();
+            loadActiveLevelsToForm();
+            setupConfidenceSync();
+            const savedPrice = localStorage.getItem('btc_price_data');
+            if(savedPrice) {
+                try {
+                    const pdata = JSON.parse(savedPrice);
+                    if(pdata.price) {
+                        updatePriceDisplayOnUI(pdata.price, pdata.source, pdata.timestamp);
+                        updatePositionMonitoring(pdata.price);
+                    }
+                } catch(e) {}
+            } else {
+                updatePositionMonitoring(null);
+            }
+            document.getElementById('active-entry').oninput = () => { calculateRiskReward(); calculateRiskManagement(); if(btcPriceData.price) updatePositionMonitoring(btcPriceData.price); };
+            document.getElementById('active-sl').oninput = () => { calculateRiskReward(); calculateRiskManagement(); if(btcPriceData.price) updatePositionMonitoring(btcPriceData.price); };
+            document.getElementById('active-tp').oninput = () => { calculateRiskReward(); calculateRiskManagement(); if(btcPriceData.price) updatePositionMonitoring(btcPriceData.price); };
+            document.getElementById('trade-value').oninput = () => { calculateRiskManagement(); if(btcPriceData.price) updatePositionMonitoring(btcPriceData.price); };
+            document.getElementById('leverage').oninput = () => { calculateRiskManagement(); if(btcPriceData.price) updatePositionMonitoring(btcPriceData.price); };
+        };
+
+        // ==================== TRADE JOURNAL DATA ====================
+        let tradeJournal = JSON.parse(localStorage.getItem('btc_trade_journal_v1')) || [];
+        let journalFilter = 'all';
+
+        function saveJournal() {
+            localStorage.setItem('btc_trade_journal_v1', JSON.stringify(tradeJournal));
+            renderJournal();
+            updateJournalStats();
+        }
+
+        // ── Page Navigation ──────────────────────────────────────────────────
+        function switchPage(page) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('page-' + page).classList.add('active');
+            document.getElementById('nav-' + page).classList.add('active');
+            if (page === 'journal') { renderJournal(); updateJournalStats(); }
+        }
+
+        // ── Close Trade Modal ─────────────────────────────────────────────────
+        function openCloseTradeModal() {
+            // Pre-fill from active levels
+            const e = activeLevels.entry, sl = activeLevels.sl, tp = activeLevels.tp;
+            const lev = activeLevels.leverage || 10, margin = activeLevels.tradeValue || 1000;
+            document.getElementById('ct-entry-display').textContent = e ? '$' + parseFloat(e).toLocaleString() : '-';
+            document.getElementById('ct-sl-display').textContent   = sl ? '$' + parseFloat(sl).toLocaleString() : '-';
+            document.getElementById('ct-tp-display').textContent   = tp ? '$' + parseFloat(tp).toLocaleString() : '-';
+            document.getElementById('ct-lev-display').textContent  = lev + 'x';
+            document.getElementById('ct-margin-display').textContent = '$' + margin.toLocaleString();
+            const isLong = parseFloat(e) > parseFloat(sl);
+            document.getElementById('ct-dir-display').textContent = isLong ? 'LONG' : 'SHORT';
+            document.getElementById('ct-exit-price').value = '';
+            document.getElementById('ct-exit-reason').value = '';
+            document.getElementById('ct-notes').value = '';
+            document.getElementById('ct-emotion').value = '';
+            document.getElementById('ct-pnl-preview').classList.add('hidden');
+            document.querySelectorAll('input[name="ct-outcome"]').forEach(r => r.checked = false);
+            document.querySelectorAll('.emotion-btn').forEach(b => b.classList.remove('bg-sky-500/30','text-sky-300','border-sky-500/50'));
+            document.querySelectorAll('.exit-reason-btn').forEach(b => b.classList.remove('bg-sky-500/30','text-sky-300','border-sky-500/50'));
+            document.getElementById('close-trade-modal').style.display = 'flex';
+        }
+
+        function closeCloseTradeModal() {
+            document.getElementById('close-trade-modal').style.display = 'none';
+        }
+
+        function setExitReason(reason) {
+            document.getElementById('ct-exit-reason').value = reason;
+            document.querySelectorAll('.exit-reason-btn').forEach(b => {
+                b.classList.remove('bg-sky-500/30','text-sky-300','border-sky-500/50');
+                if (b.textContent.trim().includes(reason.split(' ')[0]) || b.textContent.includes(reason)) {
+                    b.classList.add('bg-sky-500/30','text-sky-300','border-sky-500/50');
+                }
+            });
+        }
+
+        function setEmotion(emo) {
+            document.getElementById('ct-emotion').value = emo;
+            document.querySelectorAll('.emotion-btn').forEach(b => {
+                b.classList.remove('bg-sky-500/30','text-sky-300','border-sky-500/50');
+                if (b.textContent.trim() === emo) b.classList.add('bg-sky-500/30','text-sky-300','border-sky-500/50');
+            });
+        }
+
+        function calcCloseTrade() {
+            const entry   = parseFloat(activeLevels.entry);
+            const sl      = parseFloat(activeLevels.sl);
+            const exitP   = parseFloat(document.getElementById('ct-exit-price').value);
+            const margin  = parseFloat(activeLevels.tradeValue) || 1000;
+            const lev     = parseFloat(activeLevels.leverage)   || 10;
+            if (isNaN(entry) || isNaN(exitP) || isNaN(sl)) return;
+
+            const posSize  = margin * lev;
+            const isLong   = entry > sl;
+            const pnlPct   = isLong ? ((exitP - entry) / entry) * 100 : ((entry - exitP) / entry) * 100;
+            const pnlDollar = posSize * (pnlPct / 100);
+            const roe       = (pnlDollar / margin) * 100;
+            const resultAuto = pnlDollar > 0.5 ? 'win' : pnlDollar < -0.5 ? 'loss' : 'be';
+
+            const col = pnlDollar >= 0 ? 'text-emerald-400' : 'text-red-400';
+            document.getElementById('ct-pnl-dollar').className  = 'font-bold font-mono ' + col;
+            document.getElementById('ct-pnl-percent').className = 'font-bold ' + col;
+            document.getElementById('ct-roe').className         = 'font-bold ' + col;
+            document.getElementById('ct-pnl-dollar').textContent  = (pnlDollar >= 0 ? '+' : '') + '$' + pnlDollar.toFixed(2);
+            document.getElementById('ct-pnl-percent').textContent = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
+            document.getElementById('ct-roe').textContent         = (roe >= 0 ? '+' : '') + roe.toFixed(2) + '%';
+            const badge = { win: '✅ WIN', loss: '❌ LOSS', be: '⚖️ BE' };
+            const bCol  = { win: 'text-emerald-400', loss: 'text-red-400', be: 'text-amber-400' };
+            document.getElementById('ct-result-badge').textContent = badge[resultAuto];
+            document.getElementById('ct-result-badge').className   = 'font-bold ' + bCol[resultAuto];
+
+            // Auto-select outcome radio
+            const radio = document.querySelector(`input[name="ct-outcome"][value="${resultAuto}"]`);
+            if (radio) radio.checked = true;
+
+            document.getElementById('ct-pnl-preview').classList.remove('hidden');
+        }
+
+        function submitCloseTrade() {
+            const entry   = parseFloat(activeLevels.entry);
+            const sl      = parseFloat(activeLevels.sl);
+            const tp      = parseFloat(activeLevels.tp);
+            const exitP   = parseFloat(document.getElementById('ct-exit-price').value);
+            const margin  = parseFloat(activeLevels.tradeValue) || 1000;
+            const lev     = parseFloat(activeLevels.leverage)   || 10;
+            const outcome = document.querySelector('input[name="ct-outcome"]:checked');
+            const reason  = document.getElementById('ct-exit-reason').value.trim();
+            const notes   = document.getElementById('ct-notes').value.trim();
+            const emotion = document.getElementById('ct-emotion').value;
+
+            if (isNaN(exitP) || exitP <= 0) { alert('Masukkan harga exit yang valid!'); return; }
+            if (!outcome) { alert('Pilih hasil trade (Win/Loss/BE)!'); return; }
+            if (!entry || isNaN(entry)) { alert('Active Level Trading belum diisi entry price!'); return; }
+
+            const isLong    = entry > sl;
+            const posSize   = margin * lev;
+            const pnlPct    = isLong ? ((exitP - entry) / entry) * 100 : ((entry - exitP) / entry) * 100;
+            const pnlDollar = posSize * (pnlPct / 100);
+            const roe       = (pnlDollar / margin) * 100;
+            const rr        = activeLevels.rr || '-';
+            const now       = new Date();
+
+            const record = {
+                id: Date.now(),
+                date: now.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }),
+                time: now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+                direction: isLong ? 'LONG' : 'SHORT',
+                entry, sl, tp: tp || null, exitPrice: exitP,
+                margin, leverage: lev, positionSize: posSize,
+                pnlDollar: parseFloat(pnlDollar.toFixed(2)),
+                pnlPercent: parseFloat(pnlPct.toFixed(2)),
+                roe: parseFloat(roe.toFixed(2)),
+                rr, outcome: outcome.value,
+                exitReason: reason || '-',
+                notes: notes || '',
+                emotion: emotion || '-',
+                confidence: activeLevels.confidence || 0,
+            };
+
+            tradeJournal.unshift(record);
+            saveJournal();
+            closeCloseTradeModal();
+            switchPage('journal');
+            alert(`Trade direkam! PnL: ${pnlDollar >= 0 ? '+' : ''}$${pnlDollar.toFixed(2)}`);
+        }
+
+        // ── Journal Render ───────────────────────────────────────────────────
+        function setJournalFilter(f) {
+            journalFilter = f;
+            document.querySelectorAll('.jf-btn').forEach(b => {
+                b.classList.remove('bg-sky-500/20','text-sky-400','border-sky-500/30');
+                b.classList.add('bg-zinc-800/60','text-zinc-400','border-zinc-700');
+            });
+            const active = document.getElementById('jf-' + f);
+            if (active) {
+                active.classList.remove('bg-zinc-800/60','text-zinc-400','border-zinc-700');
+                active.classList.add('bg-sky-500/20','text-sky-400','border-sky-500/30');
+            }
+            renderJournal();
+        }
+
+        function updateJournalStats() {
+            const total = tradeJournal.length;
+            const wins  = tradeJournal.filter(t => t.outcome === 'win').length;
+            const totalPnl = tradeJournal.reduce((s, t) => s + t.pnlDollar, 0);
+            const avgPnl   = total ? totalPnl / total : 0;
+            const wr = total ? (wins / total * 100) : 0;
+
+            const pnlEl = document.getElementById('j-total-pnl');
+            if (pnlEl) {
+                pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + totalPnl.toFixed(2);
+                pnlEl.className = 'text-lg font-extrabold ' + (totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400');
+            }
+            const wrEl = document.getElementById('j-winrate');
+            if (wrEl) wrEl.textContent = wr.toFixed(1) + '%';
+            const ttEl = document.getElementById('j-total-trades');
+            if (ttEl) ttEl.textContent = total;
+            const avgEl = document.getElementById('j-avg-pnl');
+            if (avgEl) {
+                avgEl.textContent = (avgPnl >= 0 ? '+' : '') + '$' + avgPnl.toFixed(2);
+                avgEl.className = 'text-base font-extrabold ' + (avgPnl >= 0 ? 'text-emerald-400' : 'text-red-400');
+            }
+        }
+
+        function renderJournal() {
+            const list = document.getElementById('journal-list');
+            if (!list) return;
+            let data = journalFilter === 'all' ? tradeJournal : tradeJournal.filter(t => t.outcome === journalFilter);
+            if (data.length === 0) {
+                list.innerHTML = '<div class="text-center py-16 text-zinc-600 border border-dashed border-zinc-800 rounded-2xl"><p class="text-xs">Belum ada trade direkam</p><p class="text-[10px] mt-1">Klik "+ Tutup Trade" untuk rekam</p></div>';
+                return;
+            }
+            const outcomeStyle = { win: ['trade-win','text-emerald-400','✅ WIN'], loss: ['trade-loss','text-red-400','❌ LOSS'], be: ['trade-be','text-amber-400','⚖️ BE'] };
+            list.innerHTML = data.map(t => {
+                const [borderCls, pnlCls, badge] = outcomeStyle[t.outcome] || outcomeStyle.be;
+                const pnlSign = t.pnlDollar >= 0 ? '+' : '';
+                const dirCol  = t.direction === 'LONG' ? 'text-emerald-400' : 'text-red-400';
+                const jid = 'jcard-' + t.id;
+                return `<div class="journal-card ${borderCls} mb-3">
+                  <div class="flex justify-between items-start cursor-pointer" onclick="toggleCollapse('${jid}')">
+                    <div>
+                      <div class="flex items-center gap-2 mb-0.5">
+                        <span class="text-[10px] font-black ${dirCol}">${t.direction}</span>
+                        <span class="text-[10px] font-bold ${pnlCls}">${badge}</span>
+                        <span class="text-[10px] font-mono font-bold ${t.pnlDollar >= 0 ? 'text-emerald-400' : 'text-red-400'}">${pnlSign}$${t.pnlDollar.toFixed(2)}</span>
+                      </div>
+                      <p class="text-[9px] text-zinc-500">${t.date} ${t.time} · ${t.exitReason}</p>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <button onclick="event.stopPropagation();deleteJournalEntry(${t.id})" class="text-red-500/60 hover:text-red-400 text-xs px-1">🗑️</button>
+                      <svg class="w-3.5 h-3.5 text-zinc-600 rotate-transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                    </div>
+                  </div>
+                  <div id="${jid}" class="collapsible-content">
+                    <div class="mt-3 pt-3 border-t border-zinc-800 grid grid-cols-2 gap-y-1.5 gap-x-3 text-[10px]">
+                      <div><span class="text-zinc-500">Entry:</span> <span class="font-mono text-emerald-300">$${t.entry.toLocaleString()}</span></div>
+                      <div><span class="text-zinc-500">Exit:</span> <span class="font-mono text-white">$${t.exitPrice.toLocaleString()}</span></div>
+                      <div><span class="text-zinc-500">SL:</span> <span class="font-mono text-red-300">$${t.sl.toLocaleString()}</span></div>
+                      <div><span class="text-zinc-500">TP:</span> <span class="font-mono text-amber-300">${t.tp ? '$'+t.tp.toLocaleString() : '-'}</span></div>
+                      <div><span class="text-zinc-500">Leverage:</span> <span class="font-mono text-purple-300">${t.leverage}x</span></div>
+                      <div><span class="text-zinc-500">Margin:</span> <span class="font-mono text-sky-300">$${t.margin.toLocaleString()}</span></div>
+                      <div><span class="text-zinc-500">PnL %:</span> <span class="${t.pnlDollar>=0?'text-emerald-400':'text-red-400'} font-bold">${t.pnlDollar>=0?'+':''}${t.pnlPercent.toFixed(2)}%</span></div>
+                      <div><span class="text-zinc-500">ROE:</span> <span class="${t.roe>=0?'text-emerald-400':'text-red-400'} font-bold">${t.roe>=0?'+':''}${t.roe.toFixed(2)}%</span></div>
+                      <div><span class="text-zinc-500">R/R:</span> <span class="text-amber-300">${t.rr}</span></div>
+                      <div><span class="text-zinc-500">Emosi:</span> <span class="text-zinc-200">${t.emotion}</span></div>
+                      ${t.notes ? `<div class="col-span-2 mt-1"><span class="text-zinc-500">📓 Catatan:</span> <span class="text-zinc-300">${t.notes}</span></div>` : ''}
+                    </div>
+                  </div>
+                </div>`;
+            }).join('');
+        }
+
+        function deleteJournalEntry(id) {
+            if (confirm('Hapus catatan trade ini?')) {
+                tradeJournal = tradeJournal.filter(t => t.id !== id);
+                saveJournal();
+            }
+        }
+
+        // ── Patch exportAllData to include journal ───────────────────────────
+        const _origExport = exportAllData;
+
+        // ==================== PWA: SERVICE WORKER ====================
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => {
+                        console.log('[PWA] SW aktif:', reg.scope);
+                        const b = document.getElementById('pwa-badge');
+                        if (b) b.textContent = '✅ PWA';
+                    })
+                    .catch(e => console.warn('[PWA] SW gagal:', e));
+            });
+        }
+
+        // ==================== PWA: INSTALL PROMPT ====================
+        let _deferredPrompt = null;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            _deferredPrompt = e;
+            if (!localStorage.getItem('pwa_dismissed')) {
+                document.getElementById('pwa-banner').classList.add('show');
+            }
+        });
+        window.addEventListener('appinstalled', () => {
+            document.getElementById('pwa-banner').classList.remove('show');
+            const b = document.getElementById('pwa-badge');
+            if (b) b.textContent = '📱 Installed';
+        });
+        function pwaInstall() {
+            if (!_deferredPrompt) return;
+            _deferredPrompt.prompt();
+            _deferredPrompt.userChoice.then(r => {
+                _deferredPrompt = null;
+                document.getElementById('pwa-banner').classList.remove('show');
+            });
+        }
+        function pwaDismiss() {
+            document.getElementById('pwa-banner').classList.remove('show');
+            localStorage.setItem('pwa_dismissed', '1');
+        }
+
+        // ==================== PWA: OFFLINE DETECTION ====================
+        function checkOnline() {
+            const bar = document.getElementById('offline-bar');
+            if (!navigator.onLine) bar.classList.add('show');
+            else bar.classList.remove('show');
+        }
+        window.addEventListener('online', checkOnline);
+        window.addEventListener('offline', checkOnline);
+        checkOnline();
+    </script>
+
+<!-- Bottom Navigation -->
+<nav id="bottom-nav">
+  <button class="nav-btn active" id="nav-home" onclick="switchPage('home')">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+    Dashboard
+  </button>
+  <button class="nav-btn" id="nav-journal" onclick="switchPage('journal')">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+    Journal
+  </button>
+</nav>
+
+<!-- Close Trade Modal -->
+<div id="close-trade-modal" class="fixed inset-0 bg-black/85 backdrop-blur-sm hidden items-center justify-center p-4 z-50 overflow-y-auto">
+  <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 w-full max-w-md max-h-[90vh] overflow-y-auto">
+    <h3 class="text-sm font-black text-emerald-400 mb-1">📝 Tutup & Rekam Trade</h3>
+    <p class="text-[10px] text-zinc-500 mb-4">PnL terealisasi akan dihitung dan disimpan ke journal</p>
+
+    <div class="space-y-3">
+      <!-- Auto-filled info -->
+      <div class="bg-zinc-950 rounded-xl p-3 text-[10px] space-y-1 border border-zinc-800">
+        <p class="text-zinc-500 font-bold uppercase mb-1">Data dari Active Level</p>
+        <div class="grid grid-cols-2 gap-1">
+          <div><span class="text-zinc-600">Entry:</span> <span class="text-emerald-400 font-mono" id="ct-entry-display">-</span></div>
+          <div><span class="text-zinc-600">SL:</span> <span class="text-red-400 font-mono" id="ct-sl-display">-</span></div>
+          <div><span class="text-zinc-600">TP:</span> <span class="text-amber-400 font-mono" id="ct-tp-display">-</span></div>
+          <div><span class="text-zinc-600">Leverage:</span> <span class="text-purple-400 font-mono" id="ct-lev-display">-</span></div>
+          <div><span class="text-zinc-600">Margin:</span> <span class="text-sky-400 font-mono" id="ct-margin-display">-</span></div>
+          <div><span class="text-zinc-600">Arah:</span> <span class="text-cyan-400 font-mono" id="ct-dir-display">-</span></div>
+        </div>
+      </div>
+
+      <!-- Exit price -->
+      <div>
+        <label class="text-[10px] text-zinc-400 font-bold block mb-1">💱 Harga Exit / Close (USDT) <span class="text-red-400">*</span></label>
+        <input type="number" id="ct-exit-price" placeholder="misal: 77200" class="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-3 text-white font-mono text-sm" oninput="calcCloseTrade()">
+      </div>
+
+      <!-- PnL Preview -->
+      <div id="ct-pnl-preview" class="bg-zinc-950 border border-zinc-700 rounded-xl p-3 hidden">
+        <p class="text-[10px] text-zinc-500 font-bold uppercase mb-2">📊 Preview PnL Terealisasi</p>
+        <div class="grid grid-cols-2 gap-2 text-[11px]">
+          <div><span class="text-zinc-500">PnL ($):</span> <span id="ct-pnl-dollar" class="font-bold font-mono">-</span></div>
+          <div><span class="text-zinc-500">PnL (%):</span> <span id="ct-pnl-percent" class="font-bold">-</span></div>
+          <div><span class="text-zinc-500">ROE:</span> <span id="ct-roe" class="font-bold">-</span></div>
+          <div><span class="text-zinc-500">Hasil:</span> <span id="ct-result-badge" class="font-bold">-</span></div>
+        </div>
+      </div>
+
+      <!-- Outcome radio -->
+      <div>
+        <label class="text-[10px] text-zinc-400 font-bold block mb-2">🎯 Hasil Trade</label>
+        <div class="flex gap-2">
+          <label class="flex-1 flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-2 cursor-pointer">
+            <input type="radio" name="ct-outcome" value="win" class="accent-emerald-500"> <span class="text-xs text-emerald-400 font-bold">✅ Win</span>
+          </label>
+          <label class="flex-1 flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-xl p-2 cursor-pointer">
+            <input type="radio" name="ct-outcome" value="loss" class="accent-red-500"> <span class="text-xs text-red-400 font-bold">❌ Loss</span>
+          </label>
+          <label class="flex-1 flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 rounded-xl p-2 cursor-pointer">
+            <input type="radio" name="ct-outcome" value="be" class="accent-amber-500"> <span class="text-xs text-amber-400 font-bold">⚖️ BE</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Exit reason -->
+      <div>
+        <label class="text-[10px] text-zinc-400 font-bold block mb-1">🏁 Alasan Keluar</label>
+        <div class="grid grid-cols-3 gap-1 mb-2">
+          <button onclick="setExitReason('TP Hit')" class="exit-reason-btn text-[9px] bg-zinc-800 hover:bg-emerald-500/20 text-zinc-300 py-1.5 rounded-lg border border-zinc-700">🎯 TP Hit</button>
+          <button onclick="setExitReason('SL Hit')" class="exit-reason-btn text-[9px] bg-zinc-800 hover:bg-red-500/20 text-zinc-300 py-1.5 rounded-lg border border-zinc-700">🛑 SL Hit</button>
+          <button onclick="setExitReason('Manual')" class="exit-reason-btn text-[9px] bg-zinc-800 hover:bg-sky-500/20 text-zinc-300 py-1.5 rounded-lg border border-zinc-700">✋ Manual</button>
+          <button onclick="setExitReason('Trailing SL')" class="exit-reason-btn text-[9px] bg-zinc-800 text-zinc-300 py-1.5 rounded-lg border border-zinc-700">📉 Trail SL</button>
+          <button onclick="setExitReason('Partial TP')" class="exit-reason-btn text-[9px] bg-zinc-800 text-zinc-300 py-1.5 rounded-lg border border-zinc-700">⚡ Partial</button>
+          <button onclick="setExitReason('Reversed')" class="exit-reason-btn text-[9px] bg-zinc-800 text-zinc-300 py-1.5 rounded-lg border border-zinc-700">🔄 Reversed</button>
+        </div>
+        <input type="text" id="ct-exit-reason" placeholder="atau ketik sendiri..." class="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-2 text-xs text-zinc-200">
+      </div>
+
+      <!-- Notes -->
+      <div>
+        <label class="text-[10px] text-zinc-400 font-bold block mb-1">📓 Catatan / Lessons Learned</label>
+        <textarea id="ct-notes" rows="3" placeholder="Apa yang berjalan baik? Apa yang bisa diperbaiki?" class="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-2 text-xs text-zinc-200"></textarea>
+      </div>
+
+      <!-- Emotion -->
+      <div>
+        <label class="text-[10px] text-zinc-400 font-bold block mb-2">🧠 Kondisi Emosi Saat Trade</label>
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="setEmotion('Tenang 😌')" class="emotion-btn text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2 py-1 rounded-lg border border-zinc-700">Tenang 😌</button>
+          <button onclick="setEmotion('Excited 🤩')" class="emotion-btn text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2 py-1 rounded-lg border border-zinc-700">Excited 🤩</button>
+          <button onclick="setEmotion('Takut 😰')" class="emotion-btn text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2 py-1 rounded-lg border border-zinc-700">Takut 😰</button>
+          <button onclick="setEmotion('FOMO 😤')" class="emotion-btn text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2 py-1 rounded-lg border border-zinc-700">FOMO 😤</button>
+          <button onclick="setEmotion('Greedy 🤑')" class="emotion-btn text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2 py-1 rounded-lg border border-zinc-700">Greedy 🤑</button>
+          <button onclick="setEmotion('Discipline ✊')" class="emotion-btn text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2 py-1 rounded-lg border border-zinc-700">Discipline ✊</button>
+        </div>
+        <input type="hidden" id="ct-emotion" value="">
+      </div>
+
+    </div>
+
+    <div class="flex gap-2 mt-5">
+      <button onclick="closeCloseTradeModal()" class="flex-1 bg-zinc-800 text-zinc-400 py-2.5 rounded-xl text-xs">Batal</button>
+      <button onclick="submitCloseTrade()" class="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black py-2.5 rounded-xl text-xs">💾 Simpan ke Journal</button>
+    </div>
+  </div>
+</div>
+
+<!-- PWA Install Banner -->
+<div id="pwa-banner">
+    <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:1.5rem">⚡</span>
+        <div>
+            <p style="font-size:12px;font-weight:700;color:#fff;margin:0">Install BTC Journal Pro</p>
+            <p style="font-size:10px;color:#94a3b8;margin:0">Pasang ke homescreen — buka seperti app!</p>
+        </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-shrink:0">
+        <button onclick="pwaInstall()" style="background:#0ea5e9;color:#fff;font-size:11px;font-weight:700;padding:6px 12px;border-radius:8px;border:none;cursor:pointer">Install</button>
+        <button onclick="pwaDismiss()" style="background:transparent;color:#64748b;font-size:12px;border:none;cursor:pointer;padding:4px">✕</button>
+    </div>
+</div>
+
+</body>
+</html>
