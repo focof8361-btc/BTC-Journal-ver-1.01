@@ -433,104 +433,173 @@
         function saveActiveLevels() { activeLevels={entry:document.getElementById('active-entry').value, sl:document.getElementById('active-sl').value, tp:document.getElementById('active-tp').value, rr:document.getElementById('active-rr').value, tradeValue:parseFloat(document.getElementById('trade-value').value)||1000, leverage:parseFloat(document.getElementById('leverage').value)||10, confidence:activeLevels.confidence||0, source:activeLevels.source||'manual'}; localStorage.setItem('btc_active_levels_v4',JSON.stringify(activeLevels)); calculateRiskReward(); calculateRiskManagement(); if(btcPriceData.price) updatePositionMonitoring(btcPriceData.price); alert("Level trading disimpan"); }
         function resetToManualMode() { activeLevels.source='manual'; activeLevels.confluenceCount=0; saveActiveLevels(); updateConfidenceDisplay(activeLevels.confidence,'manual'); alert("Mode manual aktif"); }
         function applyConfluenceLevels() {
-            const today=new Date().toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'});
-            const todayLogs=logs.filter(l=>l.date===today);
-            if(todayLogs.length<1){ alert('Tidak ada log hari ini.\n\nTips: Pastikan log sudah diinput hari ini, atau gunakan mode manual.'); return; }
-
-            // Helper: parse a number safely from a field value
-            const parseLevel=(val)=>{
-                if(!val||val==='-'||val==='') return null;
-                const n=parseFloat(String(val).replace(/[^0-9.-]/g,''));
-                return (!isNaN(n)&&n>1000)?n:null; // BTC price must be >1000
+            // ── Helper: extract the FIRST valid BTC-range number from a string ──
+            // Handles: "76500", "$76,500", "76000-77000" (takes first), "range 75k-76k"
+            const parseLevel = (val) => {
+                if (!val || val === '-' || val === '') return null;
+                const s = String(val).replace(/,/g, '');
+                // Find first standalone number that looks like BTC price (10k-1M range)
+                const matches = s.match(/\b(\d{4,7}(?:\.\d+)?)\b/g);
+                if (!matches) return null;
+                // Return first match in BTC range
+                for (const m of matches) {
+                    const n = parseFloat(m);
+                    if (n >= 1000 && n <= 999999) return n;
+                }
+                return null;
             };
-            // Median of sorted array
-            const median=(arr)=>{ if(!arr.length) return null; const s=[...arr].sort((a,b)=>a-b); return s[Math.floor(s.length/2)]; };
-            // Average of array
-            const avg=(arr)=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;
 
-            let entries=[], stops=[], tps=[], supports=[], resistances=[];
-            let debugLines=[];
+            // ── Helper: parse ALL numbers from a range string (e.g. "75000-76000") ──
+            const parseAllNums = (val) => {
+                if (!val || val === '-' || val === '') return [];
+                const s = String(val).replace(/,/g, '');
+                const matches = s.match(/\b(\d{4,7}(?:\.\d+)?)\b/g) || [];
+                return matches.map(Number).filter(n => n >= 1000 && n <= 999999);
+            };
 
-            todayLogs.forEach((l,i)=>{
-                const e=parseLevel(l.entry);
-                const sl=parseLevel(l.stoploss)||parseLevel(l.sl);
-                const tp=parseLevel(l.tp1)||parseLevel(l.tp);
-                const sup=parseLevel(l.support);
-                const res=parseLevel(l.resistance);
-                debugLines.push(`Log ${i+1}: E=${e||'-'} SL=${sl||'-'} TP=${tp||'-'}`);
-                if(e) entries.push(e);
-                if(sl) stops.push(sl);
-                if(tp) tps.push(tp);
-                if(sup) supports.push(sup);
-                if(res) resistances.push(res);
+            const median = (arr) => {
+                if (!arr.length) return null;
+                const s = [...arr].sort((a, b) => a - b);
+                return s[Math.floor(s.length / 2)];
+            };
+            const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+            // ── Determine which logs to use: prefer today, fallback to latest N logs ──
+            const today = new Date().toLocaleDateString('id-ID', { day:'numeric', month:'short', year:'numeric' });
+            let todayLogs = logs.filter(l => l.date === today);
+            let usingFallbackDate = false;
+            let usedDate = today;
+
+            if (todayLogs.length < 1) {
+                // No logs today — find the most recent date that has logs
+                const allDates = [...new Set(logs.map(l => l.date))];
+                if (allDates.length === 0) {
+                    alert('Belum ada log sama sekali.\nSilakan input analisis dulu.');
+                    return;
+                }
+                // Take logs from the most recent date available (logs sorted newest first)
+                usedDate = logs[0].date;
+                todayLogs = logs.filter(l => l.date === usedDate);
+                usingFallbackDate = true;
+            }
+
+            // ── Extract levels from each log ──
+            let entries = [], stops = [], tps = [], allSupports = [], allResistances = [];
+            let debugLines = [];
+
+            todayLogs.forEach((l, i) => {
+                const e  = parseLevel(l.entry);
+                const sl = parseLevel(l.stoploss) || parseLevel(l.sl);
+                const tp = parseLevel(l.tp1) || parseLevel(l.tp);
+
+                // For support/resistance — extract ALL numbers from range strings
+                const supNums = parseAllNums(l.support);
+                const resNums = parseAllNums(l.resistance);
+
+                debugLines.push(`Log ${i+1} [${l.date}]: E=${e||'-'} SL=${sl||'-'} TP=${tp||'-'} Sup=[${supNums.join(',')||'-'}] Res=[${resNums.join(',')||'-'}]`);
+
+                if (e)  entries.push(e);
+                if (sl) stops.push(sl);
+                if (tp) tps.push(tp);
+                supNums.forEach(n => allSupports.push(n));
+                resNums.forEach(n => allResistances.push(n));
             });
 
-            // Use median for entry/sl/tp (more robust than average for outliers)
-            let aggEntry=median(entries);
-            let aggSL=median(stops);
-            let aggTP=median(tps);
+            let aggEntry = median(entries);
+            let aggSL    = median(stops);
+            let aggTP    = median(tps);
 
-            // Fallback: if no explicit entry, use avg of support/resistance as proxy zone
-            if(!aggEntry && supports.length && resistances.length){
-                aggEntry=(avg(supports)+avg(resistances))/2;
-                debugLines.push('Entry fallback: mid of sup/res zone');
-            }
-            // Fallback SL: if no sl, use lowest support
-            if(!aggSL && supports.length){
-                aggSL=Math.min(...supports);
-                debugLines.push('SL fallback: lowest support');
-            }
-            // Fallback TP: if no tp, use highest resistance
-            if(!aggTP && resistances.length){
-                aggTP=Math.max(...resistances);
-                debugLines.push('TP fallback: highest resistance');
+            // ── Smart fallbacks using support/resistance ──
+            // Only fallback if explicit entry/sl/tp truly missing
+            if (!aggEntry && allSupports.length && allResistances.length) {
+                // Entry = midpoint of sup/res zone
+                const midSup = avg(allSupports);
+                const midRes = avg(allResistances);
+                aggEntry = (midSup + midRes) / 2;
+                debugLines.push(`Entry fallback: midpoint sup(${midSup.toFixed(0)}) + res(${midRes.toFixed(0)}) / 2`);
+            } else if (!aggEntry && allSupports.length) {
+                aggEntry = avg(allSupports);
+                debugLines.push(`Entry fallback: avg support`);
             }
 
-            let rrText='';
-            if(aggEntry && aggSL && aggTP){
-                const risk=Math.abs(aggEntry-aggSL), reward=Math.abs(aggTP-aggEntry);
-                if(risk>0) rrText=`1 : ${(reward/risk).toFixed(2)}`;
+            if (!aggSL && allSupports.length) {
+                // SL = below lowest support
+                const lowestSup = Math.min(...allSupports);
+                aggSL = lowestSup * 0.998; // 0.2% below lowest support
+                debugLines.push(`SL fallback: 0.2% below lowest support ${lowestSup}`);
             }
 
-            // Confidence scoring
-            let conf=0;
-            conf+=todayLogs.length>=3?0.25:todayLogs.length>=2?0.15:0.05;
-            conf+=entries.length>=2?0.20:entries.length>=1?0.10:0;
-            conf+=stops.length>=2?0.20:stops.length>=1?0.10:0;
-            conf+=tps.length>=2?0.20:tps.length>=1?0.10:0;
-            conf+=(supports.length>0||resistances.length>0)?0.15:0;
-            conf=Math.min(1,conf);
+            if (!aggTP && allResistances.length) {
+                // TP = highest resistance
+                aggTP = Math.max(...allResistances);
+                debugLines.push(`TP fallback: highest resistance ${aggTP}`);
+            }
 
-            activeLevels={
-                entry:aggEntry?aggEntry.toFixed(2):'',
-                sl:aggSL?aggSL.toFixed(2):'',
-                tp:aggTP?aggTP.toFixed(2):'',
-                rr:rrText,
-                tradeValue:activeLevels.tradeValue||1000,
-                leverage:activeLevels.leverage||10,
-                confidence:conf, source:'confluence',
-                confluenceCount:todayLogs.length
+            // ── Final validation: make sure SL < Entry < TP (for long) or SL > Entry > TP (short) ──
+            // Determine direction from bias
+            const biases = todayLogs.map(l => (l.bias || '').toLowerCase());
+            const bullCount = biases.filter(b => b.includes('bull') || b.includes('long') || b.includes('buy')).length;
+            const bearCount = biases.filter(b => b.includes('bear') || b.includes('short') || b.includes('sell')).length;
+            const isLong = bullCount >= bearCount;
+
+            // Swap if needed to ensure logical order
+            if (aggEntry && aggSL && aggTP && isLong) {
+                if (aggSL > aggEntry) { [aggSL, aggEntry] = [aggEntry, aggSL]; debugLines.push('⚠️ SL dan Entry ditukar (koreksi urutan)'); }
+                if (aggTP < aggEntry) { [aggTP, aggEntry] = [aggEntry, aggTP]; debugLines.push('⚠️ TP dan Entry ditukar (koreksi urutan)'); }
+            }
+
+            let rrText = '';
+            if (aggEntry && aggSL && aggTP) {
+                const risk   = Math.abs(aggEntry - aggSL);
+                const reward = Math.abs(aggTP - aggEntry);
+                if (risk > 0) rrText = `1 : ${(reward / risk).toFixed(2)}`;
+            }
+
+            // ── Confidence scoring ──
+            let conf = 0;
+            conf += todayLogs.length >= 3 ? 0.25 : todayLogs.length >= 2 ? 0.15 : 0.05;
+            conf += entries.length >= 2 ? 0.20 : entries.length >= 1 ? 0.10 : 0;
+            conf += stops.length  >= 2 ? 0.20 : stops.length  >= 1 ? 0.10 : 0;
+            conf += tps.length    >= 2 ? 0.20 : tps.length    >= 1 ? 0.10 : 0;
+            conf += (allSupports.length > 0 || allResistances.length > 0) ? 0.15 : 0;
+            if (usingFallbackDate) conf = Math.min(conf, 0.6); // cap if using old logs
+            conf = Math.min(1, conf);
+
+            activeLevels = {
+                entry:  aggEntry ? aggEntry.toFixed(2) : '',
+                sl:     aggSL    ? aggSL.toFixed(2)    : '',
+                tp:     aggTP    ? aggTP.toFixed(2)    : '',
+                rr:     rrText,
+                tradeValue:       activeLevels.tradeValue || 1000,
+                leverage:         activeLevels.leverage   || 10,
+                confidence:       conf,
+                source:           'confluence',
+                confluenceCount:  todayLogs.length
             };
-            localStorage.setItem('btc_active_levels_v4',JSON.stringify(activeLevels));
+            localStorage.setItem('btc_active_levels_v4', JSON.stringify(activeLevels));
             loadActiveLevelsToForm();
-            updateConfidenceDisplay(conf,'confluence');
+            updateConfidenceDisplay(conf, 'confluence');
 
-            // Debug summary
-            const summary=[
+            // ── Summary alert ──
+            const dateLabel = usingFallbackDate
+                ? `⚠️ Data hari ini kosong — menggunakan log tanggal: ${usedDate}`
+                : `📅 Tanggal: ${usedDate}`;
+
+            const summary = [
+                dateLabel,
                 `📊 ${todayLogs.length} log dianalisis`,
-                `💰 Entry: ${aggEntry?'$'+aggEntry.toFixed(0):'tidak ditemukan'} (dari ${entries.length} data)`,
-                `🛑 SL: ${aggSL?'$'+aggSL.toFixed(0):'tidak ditemukan'} (dari ${stops.length} data)`,
-                `🎯 TP: ${aggTP?'$'+aggTP.toFixed(0):'tidak ditemukan'} (dari ${tps.length} data)`,
-                `📈 R/R: ${rrText||'-'}`,
-                `⚡ Confidence: ${Math.round(conf*100)}%`,
-                '',
-                '─── Detail per log ───',
+                ``,
+                `💰 Entry : ${aggEntry ? '$'+aggEntry.toFixed(0) : '❌ tidak ditemukan'} (eksplisit: ${entries.length} data)`,
+                `🛑 SL    : ${aggSL    ? '$'+aggSL.toFixed(0)    : '❌ tidak ditemukan'} (eksplisit: ${stops.length} data)`,
+                `🎯 TP    : ${aggTP    ? '$'+aggTP.toFixed(0)    : '❌ tidak ditemukan'} (eksplisit: ${tps.length} data)`,
+                `📈 R/R   : ${rrText || '-'}`,
+                `⚡ Confidence: ${Math.round(conf * 100)}%`,
+                ``,
+                `─── Detail per log ───`,
                 ...debugLines
             ].join('\n');
             alert(summary);
         }
-        function saveData() { localStorage.setItem('btc_channels_v13',JSON.stringify(channels)); localStorage.setItem('btc_active_ch_v13',activeCh); localStorage.setItem('btc_logs_v13',JSON.stringify(logs)); updateWinRate(); }
-        function updateWinRate() { let total=logs.length; if(total===0){ document.getElementById('global-winrate').innerText='0%'; document.getElementById('global-total').innerHTML='0 Logs'; return; } let bullish=logs.filter(l=>{let b=l.bias.toLowerCase(); return !(b.includes('bear')||b.includes('trap')||b.includes('reject')||b.includes('short'));}).length; let wr=(bullish/total)*100; document.getElementById('global-winrate').innerText=`${wr.toFixed(1)}%`; document.getElementById('global-total').innerHTML=`${total} Log${total!==1?'s':''}`; }
         function renderApp() { const tabContainer=document.getElementById('tab-container'); tabContainer.innerHTML=''; channels.forEach(ch=>{ let btn=document.createElement('button'); btn.className=`whitespace-nowrap px-4 py-2 text-xs font-bold rounded-lg border ${activeCh===ch.id?'bg-sky-500/10 text-sky-400 border-sky-500/30':'bg-zinc-900/20 text-zinc-500 border-zinc-800/40'}`; btn.innerText=ch.name; btn.onclick=()=>{ activeCh=ch.id; saveData(); renderApp(); }; tabContainer.appendChild(btn); }); updateWinRate(); const stream=document.getElementById('log-stream'); stream.innerHTML=''; const currentLogs=logs.filter(l=>l.channel===activeCh).sort((a,b)=>b.id-a.id); if(currentLogs.length===0){ stream.innerHTML='<div class="text-center py-16 text-zinc-600 border border-dashed border-zinc-800 rounded-2xl"><p class="text-xs">Kosong</p></div>'; return; } currentLogs.forEach(log=>{ const isBear=log.bias.toLowerCase().includes('bear')||log.bias.toLowerCase().includes('trap')||log.bias.toLowerCase().includes('reject'); const logId=`log-${log.id}`; const card=document.createElement('div'); card.className='bg-zinc-900/40 border border-zinc-800/50 rounded-2xl overflow-hidden'; card.innerHTML=`<div class="p-4 cursor-pointer flex justify-between items-center border-b border-zinc-800/30 hover:bg-zinc-800/30" onclick="toggleCollapse('${logId}')"><div class="flex gap-2"><span class="text-[11px] uppercase font-black px-2 py-0.5 rounded-md ${isBear?'bg-red-500/10 text-red-400':'bg-emerald-500/10 text-emerald-400'}">${escapeHtml(log.bias.substring(0,30))}</span><span class="text-[10px] text-zinc-400">📅 ${escapeHtml(log.date)}</span></div><div><button onclick="event.stopPropagation();editLog(${log.id})" class="text-amber-400 text-xs px-1">✏️</button><button onclick="event.stopPropagation();deleteLog(${log.id})" class="text-red-400 text-xs px-1">🗑️</button><svg class="w-4 h-4 inline rotate-transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg></div></div><div id="${logId}" class="collapsible-content"><div class="p-4 space-y-2 text-xs"><div><span class="text-zinc-500">⏱️ Timeframe:</span> ${escapeHtml(log.timeframe)}</div><div><span class="text-zinc-500">🎯 Likuiditas:</span> ${escapeHtml(log.liquidity)}</div><div><span class="text-zinc-500">🟢 Support:</span> ${escapeHtml(log.support)}</div><div><span class="text-zinc-500">🔴 Resistance:</span> ${escapeHtml(log.resistance)}</div><div><span class="text-zinc-500">📊 Indikator:</span> ${escapeHtml(log.indicator)}</div><div><span class="text-zinc-500">🗺️ Skenario:</span> ${escapeHtml(log.scenario)}</div><div><span class="text-zinc-500">🔥 Katalis:</span> ${escapeHtml(log.catalyst)}</div><div><a href="${escapeHtml(log.url)}" target="_blank" class="text-sky-400">🔗 YouTube</a></div></div></div>`; stream.appendChild(card); }); }
         window.toggleCollapse=(id)=>{ let el=document.getElementById(id); let chev=document.querySelector(`#${id} ~ .rotate-transition`); if(el){ el.classList.toggle('expanded'); if(chev) chev.style.transform=el.classList.contains('expanded')?'rotate(180deg)':'rotate(0deg)'; } };
         function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>]/g, function(m){ if(m==='&') return '&amp;'; if(m==='<') return '&lt;'; if(m==='>') return '&gt;'; return m;}); }
