@@ -600,6 +600,30 @@
             ].join('\n');
             alert(summary);
         }
+        // ── Core data persistence ──────────────────────────────────────────
+        function saveData() {
+            localStorage.setItem('btc_channels_v13', JSON.stringify(channels));
+            localStorage.setItem('btc_active_ch_v13', activeCh);
+            localStorage.setItem('btc_logs_v13', JSON.stringify(logs));
+            updateWinRate();
+        }
+
+        function updateWinRate() {
+            const total = logs.length;
+            if (total === 0) {
+                document.getElementById('global-winrate').innerText = '0%';
+                document.getElementById('global-total').innerHTML = '0 Logs';
+                return;
+            }
+            const bullish = logs.filter(l => {
+                const b = (l.bias || '').toLowerCase();
+                return !(b.includes('bear') || b.includes('trap') || b.includes('reject') || b.includes('short'));
+            }).length;
+            const wr = (bullish / total) * 100;
+            document.getElementById('global-winrate').innerText = `${wr.toFixed(1)}%`;
+            document.getElementById('global-total').innerHTML = `${total} Log${total !== 1 ? 's' : ''}`;
+        }
+
         function renderApp() { const tabContainer=document.getElementById('tab-container'); tabContainer.innerHTML=''; channels.forEach(ch=>{ let btn=document.createElement('button'); btn.className=`whitespace-nowrap px-4 py-2 text-xs font-bold rounded-lg border ${activeCh===ch.id?'bg-sky-500/10 text-sky-400 border-sky-500/30':'bg-zinc-900/20 text-zinc-500 border-zinc-800/40'}`; btn.innerText=ch.name; btn.onclick=()=>{ activeCh=ch.id; saveData(); renderApp(); }; tabContainer.appendChild(btn); }); updateWinRate(); const stream=document.getElementById('log-stream'); stream.innerHTML=''; const currentLogs=logs.filter(l=>l.channel===activeCh).sort((a,b)=>b.id-a.id); if(currentLogs.length===0){ stream.innerHTML='<div class="text-center py-16 text-zinc-600 border border-dashed border-zinc-800 rounded-2xl"><p class="text-xs">Kosong</p></div>'; return; } currentLogs.forEach(log=>{ const isBear=log.bias.toLowerCase().includes('bear')||log.bias.toLowerCase().includes('trap')||log.bias.toLowerCase().includes('reject'); const logId=`log-${log.id}`; const card=document.createElement('div'); card.className='bg-zinc-900/40 border border-zinc-800/50 rounded-2xl overflow-hidden'; card.innerHTML=`<div class="p-4 cursor-pointer flex justify-between items-center border-b border-zinc-800/30 hover:bg-zinc-800/30" onclick="toggleCollapse('${logId}')"><div class="flex gap-2"><span class="text-[11px] uppercase font-black px-2 py-0.5 rounded-md ${isBear?'bg-red-500/10 text-red-400':'bg-emerald-500/10 text-emerald-400'}">${escapeHtml(log.bias.substring(0,30))}</span><span class="text-[10px] text-zinc-400">📅 ${escapeHtml(log.date)}</span></div><div><button onclick="event.stopPropagation();editLog(${log.id})" class="text-amber-400 text-xs px-1">✏️</button><button onclick="event.stopPropagation();deleteLog(${log.id})" class="text-red-400 text-xs px-1">🗑️</button><svg class="w-4 h-4 inline rotate-transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg></div></div><div id="${logId}" class="collapsible-content"><div class="p-4 space-y-2 text-xs"><div><span class="text-zinc-500">⏱️ Timeframe:</span> ${escapeHtml(log.timeframe)}</div><div><span class="text-zinc-500">🎯 Likuiditas:</span> ${escapeHtml(log.liquidity)}</div><div><span class="text-zinc-500">🟢 Support:</span> ${escapeHtml(log.support)}</div><div><span class="text-zinc-500">🔴 Resistance:</span> ${escapeHtml(log.resistance)}</div><div><span class="text-zinc-500">📊 Indikator:</span> ${escapeHtml(log.indicator)}</div><div><span class="text-zinc-500">🗺️ Skenario:</span> ${escapeHtml(log.scenario)}</div><div><span class="text-zinc-500">🔥 Katalis:</span> ${escapeHtml(log.catalyst)}</div><div><a href="${escapeHtml(log.url)}" target="_blank" class="text-sky-400">🔗 YouTube</a></div></div></div>`; stream.appendChild(card); }); }
         window.toggleCollapse=(id)=>{ let el=document.getElementById(id); let chev=document.querySelector(`#${id} ~ .rotate-transition`); if(el){ el.classList.toggle('expanded'); if(chev) chev.style.transform=el.classList.contains('expanded')?'rotate(180deg)':'rotate(0deg)'; } };
         function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>]/g, function(m){ if(m==='&') return '&amp;'; if(m==='<') return '&lt;'; if(m==='>') return '&gt;'; return m;}); }
@@ -996,16 +1020,58 @@
         // ── Patch exportAllData to include journal ───────────────────────────
         const _origExport = exportAllData;
 
-        // ==================== PWA: SERVICE WORKER ====================
+        // ==================== PWA: SERVICE WORKER (inline blob) ====================
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js')
-                    .then(reg => {
-                        console.log('[PWA] SW aktif:', reg.scope);
-                        const b = document.getElementById('pwa-badge');
-                        if (b) b.textContent = '✅ PWA';
-                    })
-                    .catch(e => console.warn('[PWA] SW gagal:', e));
+                // Inline SW as blob URL — works without a separate sw.js file
+                const swCode = `
+const CACHE='btc-journal-v1';
+const CDN_CACHE='btc-cdn-v1';
+self.addEventListener('install', e => {
+    self.skipWaiting();
+});
+self.addEventListener('activate', e => {
+    e.waitUntil(
+        caches.keys().then(keys => Promise.all(
+            keys.filter(k => k !== CACHE && k !== CDN_CACHE).map(k => caches.delete(k))
+        )).then(() => self.clients.claim())
+    );
+});
+self.addEventListener('fetch', e => {
+    const url = new URL(e.request.url);
+    if (e.request.method !== 'GET') return;
+    const isPriceAPI = ['binance.com','coinbase.com','coingecko.com','kraken.com'].some(d => url.hostname.includes(d));
+    if (isPriceAPI || url.protocol === 'wss:') return;
+    if (url.hostname === 'cdn.tailwindcss.com') {
+        e.respondWith(caches.open(CDN_CACHE).then(cache =>
+            cache.match(e.request).then(cached => {
+                if (cached) return cached;
+                return fetch(e.request).then(res => { if(res.ok) cache.put(e.request, res.clone()); return res; });
+            })
+        ));
+        return;
+    }
+    e.respondWith(
+        caches.match(e.request).then(cached => cached || fetch(e.request).catch(() => cached))
+    );
+});`;
+                try {
+                    const blob = new Blob([swCode], { type: 'application/javascript' });
+                    const swUrl = URL.createObjectURL(blob);
+                    navigator.serviceWorker.register(swUrl, { scope: './' })
+                        .then(reg => {
+                            console.log('[PWA] SW inline aktif');
+                            const b = document.getElementById('pwa-badge');
+                            if (b) b.textContent = '✅ PWA';
+                        })
+                        .catch(e => {
+                            console.warn('[PWA] SW blob gagal (normal di file://):', e.message);
+                            const b = document.getElementById('pwa-badge');
+                            if (b) b.textContent = '⚡ PWA';
+                        });
+                } catch(e) {
+                    console.warn('[PWA] SW tidak didukung:', e);
+                }
             });
         }
 
