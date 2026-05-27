@@ -432,14 +432,222 @@
         function loadActiveLevelsToForm() { document.getElementById('active-entry').value=activeLevels.entry||''; document.getElementById('active-sl').value=activeLevels.sl||''; document.getElementById('active-tp').value=activeLevels.tp||''; document.getElementById('trade-value').value=activeLevels.tradeValue||1000; document.getElementById('leverage').value=activeLevels.leverage||10; document.getElementById('active-rr').value=activeLevels.rr||'1 : -'; calculateRiskReward(); calculateRiskManagement(); updateConfidenceDisplay(activeLevels.confidence||0, activeLevels.source||'manual'); if(btcPriceData.price) updatePositionMonitoring(btcPriceData.price); }
         function saveActiveLevels() { activeLevels={entry:document.getElementById('active-entry').value, sl:document.getElementById('active-sl').value, tp:document.getElementById('active-tp').value, rr:document.getElementById('active-rr').value, tradeValue:parseFloat(document.getElementById('trade-value').value)||1000, leverage:parseFloat(document.getElementById('leverage').value)||10, confidence:activeLevels.confidence||0, source:activeLevels.source||'manual'}; localStorage.setItem('btc_active_levels_v4',JSON.stringify(activeLevels)); calculateRiskReward(); calculateRiskManagement(); if(btcPriceData.price) updatePositionMonitoring(btcPriceData.price); alert("Level trading disimpan"); }
         function resetToManualMode() { activeLevels.source='manual'; activeLevels.confluenceCount=0; saveActiveLevels(); updateConfidenceDisplay(activeLevels.confidence,'manual'); alert("Mode manual aktif"); }
-        function applyConfluenceLevels() { const today=new Date().toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'}); const todayLogs=logs.filter(l=>l.date===today); if(todayLogs.length<2){ alert(`Hanya ${todayLogs.length} log hari ini`); return; } let entries=[], stops=[], tps=[], hasSup=false, hasRes=false; todayLogs.forEach(l=>{ if(l.entry && l.entry!=='-') entries.push(parseFloat(l.entry.replace(/[^0-9.-]/g,''))); if(l.stoploss && l.stoploss!=='-') stops.push(parseFloat(l.stoploss.replace(/[^0-9.-]/g,''))); if(l.tp1 && l.tp1!=='-') tps.push(parseFloat(l.tp1.replace(/[^0-9.-]/g,''))); if(l.support && l.support!=='-') hasSup=true; if(l.resistance && l.resistance!=='-') hasRes=true; }); let aggEntry=entries.length?entries.sort((a,b)=>a-b)[Math.floor(entries.length/2)]:null; let aggSL=stops.length?stops.sort((a,b)=>a-b)[Math.floor(stops.length/2)]:null; let aggTP=tps.length?tps.sort((a,b)=>a-b)[Math.floor(tps.length/2)]:null; let rrText=''; if(aggEntry && aggSL && aggTP){ let risk=Math.abs(aggEntry-aggSL), reward=Math.abs(aggTP-aggEntry); if(risk>0) rrText=`1 : ${(reward/risk).toFixed(2)}`; } let conf=0.3+(todayLogs.length>=3?0.2:0)+(entries.length>=2?0.2:0)+(stops.length>=2?0.15:0)+((hasSup||hasRes)?0.15:0); conf=Math.min(1,conf); activeLevels={entry:aggEntry?aggEntry.toString():'', sl:aggSL?aggSL.toString():'', tp:aggTP?aggTP.toString():'', rr:rrText, tradeValue:activeLevels.tradeValue||1000, leverage:activeLevels.leverage||10, confidence:conf, source:'confluence', confluenceCount:todayLogs.length}; localStorage.setItem('btc_active_levels_v4',JSON.stringify(activeLevels)); loadActiveLevelsToForm(); updateConfidenceDisplay(conf,'confluence'); alert(`Konfluensi ${todayLogs.length} log, confidence ${Math.round(conf*100)}%`); }
+        function applyConfluenceLevels() {
+            const today=new Date().toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'});
+            const todayLogs=logs.filter(l=>l.date===today);
+            if(todayLogs.length<1){ alert('Tidak ada log hari ini.\n\nTips: Pastikan log sudah diinput hari ini, atau gunakan mode manual.'); return; }
+
+            // Helper: parse a number safely from a field value
+            const parseLevel=(val)=>{
+                if(!val||val==='-'||val==='') return null;
+                const n=parseFloat(String(val).replace(/[^0-9.-]/g,''));
+                return (!isNaN(n)&&n>1000)?n:null; // BTC price must be >1000
+            };
+            // Median of sorted array
+            const median=(arr)=>{ if(!arr.length) return null; const s=[...arr].sort((a,b)=>a-b); return s[Math.floor(s.length/2)]; };
+            // Average of array
+            const avg=(arr)=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;
+
+            let entries=[], stops=[], tps=[], supports=[], resistances=[];
+            let debugLines=[];
+
+            todayLogs.forEach((l,i)=>{
+                const e=parseLevel(l.entry);
+                const sl=parseLevel(l.stoploss)||parseLevel(l.sl);
+                const tp=parseLevel(l.tp1)||parseLevel(l.tp);
+                const sup=parseLevel(l.support);
+                const res=parseLevel(l.resistance);
+                debugLines.push(`Log ${i+1}: E=${e||'-'} SL=${sl||'-'} TP=${tp||'-'}`);
+                if(e) entries.push(e);
+                if(sl) stops.push(sl);
+                if(tp) tps.push(tp);
+                if(sup) supports.push(sup);
+                if(res) resistances.push(res);
+            });
+
+            // Use median for entry/sl/tp (more robust than average for outliers)
+            let aggEntry=median(entries);
+            let aggSL=median(stops);
+            let aggTP=median(tps);
+
+            // Fallback: if no explicit entry, use avg of support/resistance as proxy zone
+            if(!aggEntry && supports.length && resistances.length){
+                aggEntry=(avg(supports)+avg(resistances))/2;
+                debugLines.push('Entry fallback: mid of sup/res zone');
+            }
+            // Fallback SL: if no sl, use lowest support
+            if(!aggSL && supports.length){
+                aggSL=Math.min(...supports);
+                debugLines.push('SL fallback: lowest support');
+            }
+            // Fallback TP: if no tp, use highest resistance
+            if(!aggTP && resistances.length){
+                aggTP=Math.max(...resistances);
+                debugLines.push('TP fallback: highest resistance');
+            }
+
+            let rrText='';
+            if(aggEntry && aggSL && aggTP){
+                const risk=Math.abs(aggEntry-aggSL), reward=Math.abs(aggTP-aggEntry);
+                if(risk>0) rrText=`1 : ${(reward/risk).toFixed(2)}`;
+            }
+
+            // Confidence scoring
+            let conf=0;
+            conf+=todayLogs.length>=3?0.25:todayLogs.length>=2?0.15:0.05;
+            conf+=entries.length>=2?0.20:entries.length>=1?0.10:0;
+            conf+=stops.length>=2?0.20:stops.length>=1?0.10:0;
+            conf+=tps.length>=2?0.20:tps.length>=1?0.10:0;
+            conf+=(supports.length>0||resistances.length>0)?0.15:0;
+            conf=Math.min(1,conf);
+
+            activeLevels={
+                entry:aggEntry?aggEntry.toFixed(2):'',
+                sl:aggSL?aggSL.toFixed(2):'',
+                tp:aggTP?aggTP.toFixed(2):'',
+                rr:rrText,
+                tradeValue:activeLevels.tradeValue||1000,
+                leverage:activeLevels.leverage||10,
+                confidence:conf, source:'confluence',
+                confluenceCount:todayLogs.length
+            };
+            localStorage.setItem('btc_active_levels_v4',JSON.stringify(activeLevels));
+            loadActiveLevelsToForm();
+            updateConfidenceDisplay(conf,'confluence');
+
+            // Debug summary
+            const summary=[
+                `📊 ${todayLogs.length} log dianalisis`,
+                `💰 Entry: ${aggEntry?'$'+aggEntry.toFixed(0):'tidak ditemukan'} (dari ${entries.length} data)`,
+                `🛑 SL: ${aggSL?'$'+aggSL.toFixed(0):'tidak ditemukan'} (dari ${stops.length} data)`,
+                `🎯 TP: ${aggTP?'$'+aggTP.toFixed(0):'tidak ditemukan'} (dari ${tps.length} data)`,
+                `📈 R/R: ${rrText||'-'}`,
+                `⚡ Confidence: ${Math.round(conf*100)}%`,
+                '',
+                '─── Detail per log ───',
+                ...debugLines
+            ].join('\n');
+            alert(summary);
+        }
         function saveData() { localStorage.setItem('btc_channels_v13',JSON.stringify(channels)); localStorage.setItem('btc_active_ch_v13',activeCh); localStorage.setItem('btc_logs_v13',JSON.stringify(logs)); updateWinRate(); }
         function updateWinRate() { let total=logs.length; if(total===0){ document.getElementById('global-winrate').innerText='0%'; document.getElementById('global-total').innerHTML='0 Logs'; return; } let bullish=logs.filter(l=>{let b=l.bias.toLowerCase(); return !(b.includes('bear')||b.includes('trap')||b.includes('reject')||b.includes('short'));}).length; let wr=(bullish/total)*100; document.getElementById('global-winrate').innerText=`${wr.toFixed(1)}%`; document.getElementById('global-total').innerHTML=`${total} Log${total!==1?'s':''}`; }
         function renderApp() { const tabContainer=document.getElementById('tab-container'); tabContainer.innerHTML=''; channels.forEach(ch=>{ let btn=document.createElement('button'); btn.className=`whitespace-nowrap px-4 py-2 text-xs font-bold rounded-lg border ${activeCh===ch.id?'bg-sky-500/10 text-sky-400 border-sky-500/30':'bg-zinc-900/20 text-zinc-500 border-zinc-800/40'}`; btn.innerText=ch.name; btn.onclick=()=>{ activeCh=ch.id; saveData(); renderApp(); }; tabContainer.appendChild(btn); }); updateWinRate(); const stream=document.getElementById('log-stream'); stream.innerHTML=''; const currentLogs=logs.filter(l=>l.channel===activeCh).sort((a,b)=>b.id-a.id); if(currentLogs.length===0){ stream.innerHTML='<div class="text-center py-16 text-zinc-600 border border-dashed border-zinc-800 rounded-2xl"><p class="text-xs">Kosong</p></div>'; return; } currentLogs.forEach(log=>{ const isBear=log.bias.toLowerCase().includes('bear')||log.bias.toLowerCase().includes('trap')||log.bias.toLowerCase().includes('reject'); const logId=`log-${log.id}`; const card=document.createElement('div'); card.className='bg-zinc-900/40 border border-zinc-800/50 rounded-2xl overflow-hidden'; card.innerHTML=`<div class="p-4 cursor-pointer flex justify-between items-center border-b border-zinc-800/30 hover:bg-zinc-800/30" onclick="toggleCollapse('${logId}')"><div class="flex gap-2"><span class="text-[11px] uppercase font-black px-2 py-0.5 rounded-md ${isBear?'bg-red-500/10 text-red-400':'bg-emerald-500/10 text-emerald-400'}">${escapeHtml(log.bias.substring(0,30))}</span><span class="text-[10px] text-zinc-400">📅 ${escapeHtml(log.date)}</span></div><div><button onclick="event.stopPropagation();editLog(${log.id})" class="text-amber-400 text-xs px-1">✏️</button><button onclick="event.stopPropagation();deleteLog(${log.id})" class="text-red-400 text-xs px-1">🗑️</button><svg class="w-4 h-4 inline rotate-transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg></div></div><div id="${logId}" class="collapsible-content"><div class="p-4 space-y-2 text-xs"><div><span class="text-zinc-500">⏱️ Timeframe:</span> ${escapeHtml(log.timeframe)}</div><div><span class="text-zinc-500">🎯 Likuiditas:</span> ${escapeHtml(log.liquidity)}</div><div><span class="text-zinc-500">🟢 Support:</span> ${escapeHtml(log.support)}</div><div><span class="text-zinc-500">🔴 Resistance:</span> ${escapeHtml(log.resistance)}</div><div><span class="text-zinc-500">📊 Indikator:</span> ${escapeHtml(log.indicator)}</div><div><span class="text-zinc-500">🗺️ Skenario:</span> ${escapeHtml(log.scenario)}</div><div><span class="text-zinc-500">🔥 Katalis:</span> ${escapeHtml(log.catalyst)}</div><div><a href="${escapeHtml(log.url)}" target="_blank" class="text-sky-400">🔗 YouTube</a></div></div></div>`; stream.appendChild(card); }); }
         window.toggleCollapse=(id)=>{ let el=document.getElementById(id); let chev=document.querySelector(`#${id} ~ .rotate-transition`); if(el){ el.classList.toggle('expanded'); if(chev) chev.style.transform=el.classList.contains('expanded')?'rotate(180deg)':'rotate(0deg)'; } };
         function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>]/g, function(m){ if(m==='&') return '&amp;'; if(m==='<') return '&lt;'; if(m==='>') return '&gt;'; return m;}); }
         function extractYouTubeUrl(t){ let m=t.match(/https?:\/\/[^\s<>"'\]]+/g); if(m) for(let u of m){ if(u.includes('youtube.com')||u.includes('youtu.be')) return u; } return ''; }
-        function processAIInput(){ const txt=document.getElementById('ai-input').value; if(!txt.trim()){ alert("Kosong"); return; } let bias='-',timeframe='-',support='-',resistance='-',liquidity='-',indicator='-',catalyst='-',entry='-',stoploss='-',tp1='-',tp2='-',tp3='-',rr='-'; let date=new Date().toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'}); let targetCh=activeCh; const lower=txt.toLowerCase(); for(let ch of channels){ if(lower.includes(ch.name.toLowerCase())){ targetCh=ch.id; break; } } let url=extractYouTubeUrl(txt); const dateMatch=txt.match(/Tanggal:\s*([^\n\r]+)/i)||txt.match(/(\d{1,2}\s+[A-Za-z]+\s+\d{4})/); if(dateMatch) date=dateMatch[1].replace(/[*_]/g,"").trim(); const lines=txt.split('\n'); let scenarioParts=[]; lines.forEach(line=>{ const clean=line.trim(); if(!clean) return; const cut=(str,marker)=>{ let idx=str.indexOf(marker); if(idx!==-1) return str.substring(idx+marker.length).replace(/[*_]/g,"").trim()||"-"; return "-"; }; if(clean.includes("➡️")) bias=cut(clean,"➡️"); else if(clean.includes("⏱️")) timeframe=cut(clean,"⏱️"); else if(clean.includes("🟢")) support=cut(clean,"🟢"); else if(clean.includes("🔴")) resistance=cut(clean,"🔴"); else if(clean.includes("🎯")) liquidity=cut(clean,"🎯"); else if(clean.includes("📊")) indicator=cut(clean,"📊"); else if(clean.includes("🔥")) catalyst=cut(clean,"🔥"); else if(clean.includes("💰")) entry=cut(clean,"💰"); else if(clean.includes("🛑")) stoploss=cut(clean,"🛑"); else if(clean.includes("🎯1")||clean.includes("🎯 TP1")){ let v=cut(clean,clean.includes("🎯1")?"🎯1":"🎯 TP1"); if(v!=="-") tp1=v; } else if(clean.includes("🎯2")||clean.includes("🎯 TP2")){ let v=cut(clean,clean.includes("🎯2")?"🎯2":"🎯 TP2"); if(v!=="-") tp2=v; } else if(clean.includes("🎯3")||clean.includes("🎯 TP3")){ let v=cut(clean,clean.includes("🎯3")?"🎯3":"🎯 TP3"); if(v!=="-") tp3=v; } else if(clean.includes("📈")||clean.includes("RR")){ let marker=clean.includes("RR")?"RR":"📈"; let v=cut(clean,marker); if(v!=="-") rr=v; } else if(clean.includes("🗺️")){ let init=cut(clean,"🗺️"); if(init!=="-") scenarioParts.push(init); } else if(scenarioParts.length>0 && !/^[➡️⏱️🟢🔴🎯📊🔥🗺️💰🛑📈]/.test(clean) && !clean.toLowerCase().includes("link video") && !clean.toLowerCase().includes("tanggal:")){ scenarioParts.push(clean.replace(/[*_]/g,"").trim()); } }); let scenario=scenarioParts.length>0?scenarioParts.join(" "):"Skenario otomatis."; const newLog={ id:Date.now(), channel:targetCh, date, url, bias:bias==="-"? "Neutral":bias, timeframe, entry:entry==="-"? "":entry, stoploss:stoploss==="-"? "":stoploss, tp1:tp1==="-"? "":tp1, tp2:tp2==="-"? "":tp2, tp3:tp3==="-"? "":tp3, rr:rr==="-"? "":rr, support, resistance, liquidity, indicator, scenario, catalyst }; logs.unshift(newLog); activeCh=targetCh; saveData(); renderApp(); document.getElementById('ai-input').value=''; alert("Log ditambahkan"); }
+        function processAIInput(){
+            const txt=document.getElementById('ai-input').value;
+            if(!txt.trim()){ alert("Kosong"); return; }
+            let bias='-',timeframe='-',support='-',resistance='-',liquidity='-',indicator='-',catalyst='-',entry='-',stoploss='-',tp1='-',tp2='-',tp3='-',rr='-';
+            let date=new Date().toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'});
+            let targetCh=activeCh;
+            const lower=txt.toLowerCase();
+            for(let ch of channels){ if(lower.includes(ch.name.toLowerCase())){ targetCh=ch.id; break; } }
+            let url=extractYouTubeUrl(txt);
+            const dateMatch=txt.match(/Tanggal:\s*([^\n\r]+)/i)||txt.match(/(\d{1,2}\s+[A-Za-z]+\s+\d{4})/);
+            if(dateMatch) date=dateMatch[1].replace(/[*_]/g,"").trim();
+            const lines=txt.split('\n');
+            let scenarioParts=[];
+            const cut=(str,marker)=>{ let idx=str.indexOf(marker); if(idx!==-1) return str.substring(idx+marker.length).replace(/[*_]/g,"").trim()||"-"; return "-"; };
+            const firstNum=(s)=>{ if(!s) return null; const m=String(s).match(/[\d,]+\.?\d*/); return m?m[0].replace(/,/g,''):null; };
+
+            lines.forEach(line=>{
+                const clean=line.trim(); if(!clean) return;
+                const cl=clean.toLowerCase();
+                // ── TP lines checked FIRST (before generic 🎯) ──
+                if(clean.includes("🎯1")||clean.includes("🎯TP1")||clean.includes("🎯 TP1")||cl.match(/\btp1\b/)||cl.match(/target\s?1/)||cl.match(/take\s?profit\s?1/)){
+                    let raw=clean.includes("🎯1")?cut(clean,"🎯1"):clean.includes("🎯TP1")?cut(clean,"🎯TP1"):clean.includes("🎯 TP1")?cut(clean,"🎯 TP1"):clean.replace(/.*(?:tp1|target\s?1|take\s?profit\s?1)[:\s]*/i,"").trim();
+                    let n=firstNum(raw); if(n) tp1=n;
+                }
+                else if(clean.includes("🎯2")||clean.includes("🎯TP2")||clean.includes("🎯 TP2")||cl.match(/\btp2\b/)||cl.match(/target\s?2/)||cl.match(/take\s?profit\s?2/)){
+                    let raw=clean.includes("🎯2")?cut(clean,"🎯2"):clean.includes("🎯TP2")?cut(clean,"🎯TP2"):clean.includes("🎯 TP2")?cut(clean,"🎯 TP2"):clean.replace(/.*(?:tp2|target\s?2|take\s?profit\s?2)[:\s]*/i,"").trim();
+                    let n=firstNum(raw); if(n) tp2=n;
+                }
+                else if(clean.includes("🎯3")||clean.includes("🎯TP3")||clean.includes("🎯 TP3")||cl.match(/\btp3\b/)||cl.match(/target\s?3/)||cl.match(/take\s?profit\s?3/)){
+                    let raw=clean.includes("🎯3")?cut(clean,"🎯3"):clean.includes("🎯TP3")?cut(clean,"🎯TP3"):clean.includes("🎯 TP3")?cut(clean,"🎯 TP3"):clean.replace(/.*(?:tp3|target\s?3|take\s?profit\s?3)[:\s]*/i,"").trim();
+                    let n=firstNum(raw); if(n) tp3=n;
+                }
+                // ── TP generic (single target) ──
+                else if(!clean.includes("🎯")&&(cl.match(/^\btp\b[:\s]/)||cl.match(/^take\s?profit[:\s]/)||cl.match(/^target[:\s]/))){
+                    let raw=clean.replace(/.*(?:\btp\b|take\s?profit|target)[:\s]*/i,"").trim();
+                    let n=firstNum(raw); if(n&&tp1==='-') tp1=n;
+                }
+                // ── Entry ──
+                else if(clean.includes("💰")||cl.match(/^entry[:\s]/)||cl.match(/^buy[:\s]/)||cl.match(/^sell[:\s]/)){
+                    let raw=clean.includes("💰")?cut(clean,"💰"):clean.replace(/.*(?:entry|buy|sell)[:\s]*/i,"").trim();
+                    let n=firstNum(raw); if(n) entry=n;
+                }
+                // ── Stop Loss ──
+                else if(clean.includes("🛑")||cl.match(/^\bsl\b[:\s]/)||cl.match(/^stop\s?loss[:\s]/)){
+                    let raw=clean.includes("🛑")?cut(clean,"🛑"):clean.replace(/.*(?:\bsl\b|stop\s?loss)[:\s]*/i,"").trim();
+                    let n=firstNum(raw); if(n) stoploss=n;
+                }
+                // ── Bias ──
+                else if(clean.includes("➡️")||cl.match(/^bias[:\s]/)){
+                    bias=clean.includes("➡️")?cut(clean,"➡️"):clean.replace(/.*bias[:\s]*/i,"").trim();
+                }
+                // ── Timeframe ──
+                else if(clean.includes("⏱️")||cl.match(/^\btf\b[:\s]/)||cl.match(/^timeframe[:\s]/)){
+                    timeframe=clean.includes("⏱️")?cut(clean,"⏱️"):clean.replace(/.*(?:\btf\b|timeframe)[:\s]*/i,"").trim();
+                }
+                // ── Support ──
+                else if(clean.includes("🟢")||cl.match(/^support[:\s]/)||cl.match(/^\bsup\b[:\s]/)){
+                    support=clean.includes("🟢")?cut(clean,"🟢"):clean.replace(/.*(?:support|\bsup\b)[:\s]*/i,"").trim();
+                }
+                // ── Resistance ──
+                else if(clean.includes("🔴")||cl.match(/^resistance[:\s]/)||cl.match(/^\bres\b[:\s]/)){
+                    resistance=clean.includes("🔴")?cut(clean,"🔴"):clean.replace(/.*(?:resistance|\bres\b)[:\s]*/i,"").trim();
+                }
+                // ── Liquidity (🎯 tanpa angka langsung / kata kunci) — AFTER TP checks ──
+                else if(clean.includes("🎯")||cl.match(/^liquidity[:\s]/)||cl.match(/^\bliq\b[:\s]/)){
+                    liquidity=clean.includes("🎯")?cut(clean,"🎯"):clean.replace(/.*(?:liquidity|\bliq\b)[:\s]*/i,"").trim();
+                }
+                // ── Indicator ──
+                else if(clean.includes("📊")||cl.match(/^indicator[:\s]/)||cl.match(/^indikator[:\s]/)){
+                    indicator=clean.includes("📊")?cut(clean,"📊"):clean.replace(/.*(?:indicator|indikator)[:\s]*/i,"").trim();
+                }
+                // ── Catalyst ──
+                else if(clean.includes("🔥")||cl.match(/^catalyst[:\s]/)||cl.match(/^katalis[:\s]/)){
+                    catalyst=clean.includes("🔥")?cut(clean,"🔥"):clean.replace(/.*(?:catalyst|katalis)[:\s]*/i,"").trim();
+                }
+                // ── R/R ──
+                else if(clean.includes("📈")||cl.match(/^r\/r[:\s]/)||cl.match(/^\brr\b[:\s]/)||cl.match(/^risk.reward[:\s]/)){
+                    let raw=clean.includes("📈")?cut(clean,"📈"):clean.replace(/.*(?:r\/r|\brr\b|risk.reward)[:\s]*/i,"").trim();
+                    if(raw&&raw!=="-") rr=raw;
+                }
+                // ── Scenario ──
+                else if(clean.includes("🗺️")||cl.match(/^skenario[:\s]/)||cl.match(/^scenario[:\s]/)){
+                    let init=clean.includes("🗺️")?cut(clean,"🗺️"):clean.replace(/.*(?:skenario|scenario)[:\s]*/i,"").trim();
+                    if(init&&init!=="-") scenarioParts.push(init);
+                }
+                else if(scenarioParts.length>0&&!/[💰🛑🎯📊🔥🗺️➡️⏱️🟢🔴📈]/.test(clean)&&!cl.includes("link video")&&!cl.includes("tanggal:")){
+                    scenarioParts.push(clean.replace(/[*_]/g,"").trim());
+                }
+            });
+
+            // ── Fallback: regex scan full text if fields still empty ──
+            if(entry==='-'){ const m=txt.match(/(?:entry|buy at|sell at)[:\s]+\$?([\d,]+\.?\d*)/i); if(m) entry=m[1].replace(/,/g,''); }
+            if(stoploss==='-'){ const m=txt.match(/(?:\bsl\b|stop\s?loss)[:\s]+\$?([\d,]+\.?\d*)/i); if(m) stoploss=m[1].replace(/,/g,''); }
+            if(tp1==='-'){ const m=txt.match(/(?:\btp1?\b|take\s?profit)[:\s]+\$?([\d,]+\.?\d*)/i); if(m) tp1=m[1].replace(/,/g,''); }
+
+            let scenario=scenarioParts.length>0?scenarioParts.join(" "):"Skenario otomatis.";
+            const newLog={
+                id:Date.now(), channel:targetCh, date, url,
+                bias:bias==="-"?"Neutral":bias, timeframe,
+                entry:entry==="-"?"":entry,
+                stoploss:stoploss==="-"?"":stoploss,
+                tp1:tp1==="-"?"":tp1, tp2:tp2==="-"?"":tp2, tp3:tp3==="-"?"":tp3,
+                rr:rr==="-"?"":rr, support, resistance, liquidity, indicator, scenario, catalyst
+            };
+            logs.unshift(newLog); activeCh=targetCh; saveData(); renderApp();
+            document.getElementById('ai-input').value='';
+            let extracted=[];
+            if(newLog.entry) extracted.push('Entry: '+newLog.entry);
+            if(newLog.stoploss) extracted.push('SL: '+newLog.stoploss);
+            if(newLog.tp1) extracted.push('TP1: '+newLog.tp1);
+            if(newLog.tp2) extracted.push('TP2: '+newLog.tp2);
+            alert("Log ditambahkan!\n"+(extracted.length?extracted.join(' | '):'(tidak ada level numerik terdeteksi)'));
+        }
         function deleteLog(id){ if(confirm("Hapus?")){ logs=logs.filter(l=>l.id!==id); saveData(); renderApp(); } }
         function editLog(id){ const log=logs.find(l=>l.id===id); if(!log) return; document.getElementById('edit-log-id').value=log.id; document.getElementById('edit-date').value=log.date||''; document.getElementById('edit-url').value=log.url||''; document.getElementById('edit-bias').value=log.bias||''; document.getElementById('edit-timeframe').value=log.timeframe||''; document.getElementById('edit-support').value=log.support||''; document.getElementById('edit-resistance').value=log.resistance||''; document.getElementById('edit-liquidity').value=log.liquidity||''; document.getElementById('edit-indicator').value=log.indicator||''; document.getElementById('edit-scenario').value=log.scenario||''; document.getElementById('edit-catalyst').value=log.catalyst||''; document.getElementById('edit-modal').style.display='flex'; }
         function saveEditLog(){ const id=parseInt(document.getElementById('edit-log-id').value); const idx=logs.findIndex(l=>l.id===id); if(idx!==-1){ logs[idx]={...logs[idx], date:document.getElementById('edit-date').value, url:document.getElementById('edit-url').value, bias:document.getElementById('edit-bias').value, timeframe:document.getElementById('edit-timeframe').value, support:document.getElementById('edit-support').value, resistance:document.getElementById('edit-resistance').value, liquidity:document.getElementById('edit-liquidity').value, indicator:document.getElementById('edit-indicator').value, scenario:document.getElementById('edit-scenario').value, catalyst:document.getElementById('edit-catalyst').value }; saveData(); renderApp(); closeEditModal(); alert("Update"); } }
